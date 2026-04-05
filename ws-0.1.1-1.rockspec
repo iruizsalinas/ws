@@ -1,10 +1,10 @@
 rockspec_format = "3.0"
 package = "ws"
-version = "0.1.0-1"
+version = "0.1.1-1"
 
 source = {
   url = "git+https://github.com/iruizsalinas/ws.git",
-  tag = "v0.1.0",
+  tag = "v0.1.1",
 }
 
 description = {

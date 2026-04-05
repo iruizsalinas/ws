@@ -15,7 +15,7 @@ M.CLOSED = WebSocket.CLOSED
 M.TEXT = frame.TEXT
 M.BINARY = frame.BINARY
 
-M._VERSION = "0.1.0"
+M._VERSION = "0.1.1"
 
 function M.client(address, options)
   return WebSocket.new(address, options)
