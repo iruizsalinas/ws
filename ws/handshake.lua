@@ -5,6 +5,7 @@ local url_mod = require("ws.url")
 local frame_mod = require("ws.frame")
 local extension = require("ws.extension")
 local deflate_mod = require("ws.deflate")
+local validation = require("ws.validation")
 
 local M = {}
 
@@ -186,8 +187,13 @@ end
 
 function M._validate_response(sock, ws, headers, key, protocols, pmd)
   local upgrade = headers["upgrade"]
-  if not upgrade or upgrade:lower() ~= "websocket" then
+  if not validation.header_has_token(upgrade, "websocket") then
     return close_and_fail(sock, ws, "invalid Upgrade header")
+  end
+
+  local connection = headers["connection"]
+  if not validation.header_has_token(connection, "upgrade") then
+    return close_and_fail(sock, ws, "invalid Connection header")
   end
 
   local expected = base64.encode(sha1_mod.sha1(key .. frame_mod.GUID))
@@ -197,11 +203,15 @@ function M._validate_response(sock, ws, headers, key, protocols, pmd)
 
   local server_proto = headers["sec-websocket-protocol"]
   if server_proto then
+    if #protocols == 0 then
+      return close_and_fail(sock, ws, "server sent an unsolicited subprotocol")
+    end
+
     local found = false
     for _, p in ipairs(protocols) do
       if p == server_proto then found = true break end
     end
-    if #protocols > 0 and not found then
+    if not found then
       return close_and_fail(sock, ws, "server sent an invalid subprotocol")
     end
     ws.protocol = server_proto

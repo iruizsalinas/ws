@@ -2,6 +2,7 @@ local compat = require("ws.compat")
 local frame_mod = require("ws.frame")
 local buffer = require("ws.buffer")
 local validation = require("ws.validation")
+local utf8_mod = require("ws.utf8")
 
 local M = {}
 M.__index = M
@@ -169,6 +170,9 @@ function M:close(code, reason, cb)
   else
     if #reason > 123 then
       error("close reason must not exceed 123 bytes", 2)
+    end
+    if not utf8_mod.is_valid(reason) then
+      error("close reason must be valid UTF-8", 2)
     end
     data = buffer.write_uint16be(code) .. reason
   end

@@ -5,6 +5,7 @@ local frame_mod = require("ws.frame")
 local extension = require("ws.extension")
 local subprotocol_mod = require("ws.subprotocol")
 local deflate_mod = require("ws.deflate")
+local validation = require("ws.validation")
 local WebSocket = require("ws.websocket")
 
 local RUNNING = 0
@@ -41,6 +42,8 @@ function M.new(options)
   self._server = nil
   self._state = RUNNING
   self._socket_lib = nil
+  self._connections = {}
+  self._socket_map = {}
 
   if self._client_tracking then
     self.clients = {}
@@ -51,6 +54,35 @@ function M.new(options)
   end
 
   return self
+end
+
+function M:_register_connection(ws)
+  self._connections[ws] = true
+  self._socket_map[ws._socket] = ws
+
+  if self._client_tracking then
+    self.clients[ws] = true
+  end
+
+  ws:on("close", function()
+    self:_unregister_connection(ws)
+  end)
+end
+
+function M:_unregister_connection(ws)
+  self._connections[ws] = nil
+  if ws._socket then
+    self._socket_map[ws._socket] = nil
+  end
+
+  if self._client_tracking then
+    self.clients[ws] = nil
+  end
+
+  if self._state == CLOSING and not next(self._connections) then
+    self._state = CLOSED
+    self:emit("close")
+  end
 end
 
 function M:listen(callback)
@@ -102,11 +134,11 @@ function M:poll(timeout)
     sockets[#sockets + 1] = self._server
   end
 
-  if self._client_tracking then
-    for ws in pairs(self.clients) do
-      if ws._socket and (ws.ready_state == "OPEN" or ws.ready_state == "CLOSING") then
-        sockets[#sockets + 1] = ws._socket
-      end
+  for sock, ws in pairs(self._socket_map) do
+    if ws.ready_state == "OPEN" or ws.ready_state == "CLOSING" then
+      sockets[#sockets + 1] = sock
+    else
+      self._socket_map[sock] = nil
     end
   end
 
@@ -124,14 +156,21 @@ function M:poll(timeout)
   end
 
   -- check close deadlines
-  if self._client_tracking then
-    local now = os.time()
-    for ws in pairs(self.clients) do
-      if ws._close_deadline and now >= ws._close_deadline then
-        ws:_destroy_socket()
-      end
+  local now = os.time()
+  for ws in pairs(self._connections) do
+    if ws._close_deadline and now >= ws._close_deadline then
+      ws:_destroy_socket()
     end
   end
+end
+
+local function contains_protocol(protocols, selected)
+  for _, protocol in ipairs(protocols) do
+    if protocol == selected then
+      return true
+    end
+  end
+  return false
 end
 
 function M:_accept_connection()
@@ -172,8 +211,14 @@ end
 
 function M:_handle_upgrade(socket, method, path, headers)
   local upgrade = headers["upgrade"]
-  if not upgrade or upgrade:lower() ~= "websocket" then
+  if not validation.header_has_token(upgrade, "websocket") then
     self:_abort_handshake(socket, 400, "Invalid Upgrade header")
+    return
+  end
+
+  local connection = headers["connection"]
+  if not validation.header_has_token(connection, "upgrade") then
+    self:_abort_handshake(socket, 400, "Invalid Connection header")
     return
   end
 
@@ -279,6 +324,10 @@ function M:_complete_upgrade(socket, key, protocols, request_headers, path, exts
       selected = protocols[1]
     end
     if selected then
+      if not contains_protocol(protocols, selected) then
+        self:_abort_handshake(socket, 500, "Invalid subprotocol selection")
+        return
+      end
       response_headers[#response_headers + 1] =
         "Sec-WebSocket-Protocol: " .. selected
       ws.protocol = selected
@@ -307,17 +356,7 @@ function M:_complete_upgrade(socket, key, protocols, request_headers, path, exts
 
   socket:settimeout(0)
   ws:_setup_socket(socket, exts)
-
-  if self._client_tracking then
-    self.clients[ws] = true
-    ws:on("close", function()
-      self.clients[ws] = nil
-      if self._state == CLOSING and not next(self.clients) then
-        self._state = CLOSED
-        self:emit("close")
-      end
-    end)
-  end
+  self:_register_connection(ws)
 
   self:emit("connection", ws, { headers = request_headers, path = path })
 end
@@ -327,11 +366,9 @@ function M:handle_upgrade(socket, method, path, headers)
 end
 
 function M:_read_client(sock)
-  for ws in pairs(self.clients) do
-    if ws._socket == sock then
-      ws:poll(0)
-      return
-    end
+  local ws = self._socket_map[sock]
+  if ws then
+    ws:poll(0)
   end
 end
 
@@ -342,6 +379,7 @@ function M:_abort_handshake(socket, code, message, extra_headers)
     [403] = "Forbidden",
     [405] = "Method Not Allowed",
     [426] = "Upgrade Required",
+    [500] = "Internal Server Error",
     [503] = "Service Unavailable",
   })[code] or "Error"
 
@@ -384,23 +422,17 @@ function M:close(cb)
     self._server = nil
   end
 
-  if self._client_tracking then
-    if not next(self.clients) then
-      self._state = CLOSED
-      if cb then cb() end
-      self:emit("close")
-      return
-    end
-
-    if cb then self:once("close", cb) end
-
-    for ws in pairs(self.clients) do
-      ws:close(1001, "server shutting down")
-    end
-  else
+  if not next(self._connections) then
     self._state = CLOSED
     if cb then cb() end
     self:emit("close")
+    return
+  end
+
+  if cb then self:once("close", cb) end
+
+  for ws in pairs(self._connections) do
+    ws:close(1001, "server shutting down")
   end
 end
 
