@@ -1,4 +1,4 @@
-package.path = '../?.lua;../?/init.lua;../ws/?.lua;' .. package.path
+package.path = './?.lua;../?.lua;../?/init.lua;../ws/?.lua;' .. package.path
 
 local M = {}
 M.count = 0

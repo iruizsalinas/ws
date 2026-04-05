@@ -42,4 +42,10 @@ T.check("token space invalid", validation.token_chars[32] == 0)
 T.check("token A valid", validation.token_chars[65] == 1)
 T.check("token ( invalid", validation.token_chars[40] == 0)
 
+-- header_has_token
+T.check("connection token exact", validation.header_has_token("Upgrade", "upgrade"))
+T.check("connection token in list", validation.header_has_token("keep-alive, Upgrade", "upgrade"))
+T.check("token match trims whitespace", validation.header_has_token(" keep-alive ,\tUpgrade ", "upgrade"))
+T.check("token missing", not validation.header_has_token("close", "upgrade"))
+
 T.finish()

@@ -12,7 +12,9 @@ local test_files = {
   "test_subprotocol.lua",
   "test_frame.lua",
   "test_receiver.lua",
+  "test_sender.lua",
   "test_handshake.lua",
+  "test_server.lua",
   "test_websocket.lua",
   "test_stress.lua",
 }
@@ -20,9 +22,21 @@ local test_files = {
 local lua = arg[-1] or "lua"
 local failed = {}
 local total_pass = 0
+local script_dir = arg[0]:match("^(.*)[/\\]") or "."
+local sep = package.config:sub(1, 1)
+local lua_cmd = lua
+
+if lua:find("%s") then
+  lua_cmd = '"' .. lua .. '"'
+end
 
 for _, file in ipairs(test_files) do
-  local cmd = lua .. " " .. file .. " 2>&1"
+  local cmd
+  if sep == "\\" then
+    cmd = 'cd /d "' .. script_dir .. '" && ' .. lua_cmd .. ' "' .. file .. '" 2>&1'
+  else
+    cmd = 'cd "' .. script_dir .. '" && ' .. lua_cmd .. ' "' .. file .. '" 2>&1'
+  end
   local handle = io.popen(cmd)
   local output = handle:read("*a")
   local ok = handle:close()

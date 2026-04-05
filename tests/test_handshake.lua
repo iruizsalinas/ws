@@ -57,4 +57,45 @@ local req_origin, _ = handshake._build_request(mock_ws, parsed80, "AAAAAAAAAAAAA
 T.check("has origin", req_origin:find("Origin: http://example.com") ~= nil)
 mock_ws._origin = nil
 
+local function make_mock_socket()
+  return {
+    closed = false,
+    close = function(self) self.closed = true end,
+  }
+end
+
+local function make_mock_ws()
+  return {
+    protocol = "",
+    aborted = nil,
+    setup_called = false,
+    _abort = function(self, msg) self.aborted = msg end,
+    _setup_socket = function(self) self.setup_called = true end,
+  }
+end
+
+-- response validation requires Connection: Upgrade
+local sock1 = make_mock_socket()
+local ws1 = make_mock_ws()
+local ok_conn, err_conn = handshake._validate_response(sock1, ws1, {
+  upgrade = "websocket",
+  ["sec-websocket-accept"] = expected_accept,
+}, client_key, { "chat" }, nil)
+T.check("missing connection rejected", ok_conn == nil and err_conn ~= nil)
+T.check_equal("missing connection abort", ws1.aborted, "invalid Connection header")
+T.check("missing connection closes socket", sock1.closed)
+
+-- unsolicited server subprotocol is rejected
+local sock2 = make_mock_socket()
+local ws2 = make_mock_ws()
+local ok_proto, err_proto = handshake._validate_response(sock2, ws2, {
+  upgrade = "websocket",
+  connection = "Upgrade",
+  ["sec-websocket-accept"] = expected_accept,
+  ["sec-websocket-protocol"] = "chat",
+}, client_key, {}, nil)
+T.check("unsolicited subprotocol rejected", ok_proto == nil and err_proto ~= nil)
+T.check_equal("unsolicited subprotocol abort", ws2.aborted, "server sent an unsolicited subprotocol")
+T.check("unsolicited subprotocol closes socket", sock2.closed)
+
 T.finish()
