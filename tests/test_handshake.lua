@@ -102,6 +102,23 @@ local function make_mock_socket()
   }
 end
 
+local function make_response_socket(chunks)
+  return {
+    closed = false,
+    receive_calls = 0,
+    receive_sizes = {},
+    receive = function(self, size)
+      self.receive_calls = self.receive_calls + 1
+      self.receive_sizes[#self.receive_sizes + 1] = size
+      local item = table.remove(chunks, 1)
+      if item == nil then return nil, "closed", "" end
+      if type(item) == "table" then return nil, item[1], item[2] end
+      return item
+    end,
+    close = function(self) self.closed = true end,
+  }
+end
+
 local function make_mock_ws()
   return {
     protocol = "",
@@ -111,6 +128,38 @@ local function make_mock_ws()
     _setup_socket = function(self) self.setup_called = true end,
   }
 end
+
+-- response parser enforces bounded reads
+local big_sock = make_response_socket({ string.rep("x", 9) })
+local big_ws = make_mock_ws()
+big_ws._max_response_header_size = 8
+local big_headers, big_err = handshake._read_response(big_sock, big_ws)
+T.check("large response header rejected", big_headers == nil and big_err ~= nil)
+T.check_equal("large response header abort", big_ws.aborted, "response headers too large")
+T.check_equal("large response header bounded read", big_sock.receive_sizes[1], 9)
+T.check("large response header closes socket", big_sock.closed)
+
+local many_chunks = { "HTTP/1.1 101 Switching Protocols\r\n" }
+for i = 1, 101 do
+  many_chunks[#many_chunks + 1] = "X-Test-" .. i .. ": 1\r\n"
+end
+many_chunks[#many_chunks + 1] = "\r\n"
+local many_sock = make_response_socket(many_chunks)
+local many_ws = make_mock_ws()
+many_ws._max_response_headers = 100
+local many_headers, many_err = handshake._read_response(many_sock, many_ws)
+T.check("too many response headers rejected", many_headers == nil and many_err ~= nil)
+T.check_equal("too many response headers abort", many_ws.aborted, "too many response headers")
+T.check("too many response headers closes socket", many_sock.closed)
+
+local ok_sock = make_response_socket({
+  "HTTP/1.1 101 Switching Protocols\r\nUp",
+  "grade: websocket\r\nConnection: Upgrade\r\n\r\n",
+})
+local ok_ws = make_mock_ws()
+local ok_headers, ok_code = handshake._read_response(ok_sock, ok_ws)
+T.check_equal("chunked response status", ok_code, 101)
+T.check_equal("chunked response header", ok_headers and ok_headers.upgrade, "websocket")
 
 -- response validation requires Connection: Upgrade
 local sock1 = make_mock_socket()

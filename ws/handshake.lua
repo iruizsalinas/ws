@@ -9,6 +9,8 @@ local validation = require("ws.validation")
 
 local M = {}
 
+local RESPONSE_CHUNK_SIZE = 1024
+
 local function has_ctl(value)
   return type(value) == "string" and value:find("[%z\1-\31\127]") ~= nil
 end
@@ -217,28 +219,64 @@ function M._build_request(ws, parsed, key, protocols)
 end
 
 function M._read_response(sock, ws)
-  local status_line, rlerr = sock:receive("*l")
-  if not status_line then
-    return close_and_fail(sock, ws, "failed to read response: " .. tostring(rlerr))
-  end
-
-  local _, status_code = status_line:match("^(HTTP/%d+%.%d+)%s+(%d+)")
-  if not status_code then
-    return close_and_fail(sock, ws, "invalid HTTP response")
-  end
-
+  local max_header_size = ws._max_response_header_size or 8192
+  local max_headers = ws._max_response_headers or 100
+  local buffer = ""
+  local size = 0
+  local status_code
   local response_headers = {}
-  while true do
-    local line, lerr = sock:receive("*l")
-    if not line then
-      return close_and_fail(sock, ws, "failed reading headers: " .. tostring(lerr))
-    end
-    if line == "" then break end
-    local name, value = line:match("^([^:]+):%s*(.*)")
-    if name then response_headers[name:lower()] = value end
-  end
+  local header_count = 0
 
-  return response_headers, tonumber(status_code)
+  while true do
+    local read_size = math.min(RESPONSE_CHUNK_SIZE, max_header_size - size + 1)
+    if read_size <= 0 then
+      return close_and_fail(sock, ws, "response headers too large")
+    end
+
+    local chunk, rerr, partial = sock:receive(read_size)
+    chunk = chunk or partial
+
+    if chunk and #chunk > 0 then
+      size = size + #chunk
+      if size > max_header_size then
+        return close_and_fail(sock, ws, "response headers too large")
+      end
+      buffer = buffer .. chunk
+    end
+
+    while true do
+      local newline = buffer:find("\n", 1, true)
+      if not newline then break end
+
+      local line = buffer:sub(1, newline - 1)
+      if line:sub(-1) == "\r" then line = line:sub(1, -2) end
+      buffer = buffer:sub(newline + 1)
+
+      if not status_code then
+        local _, code = line:match("^(HTTP/%d+%.%d+)%s+(%d+)")
+        if not code then
+          return close_and_fail(sock, ws, "invalid HTTP response")
+        end
+        status_code = tonumber(code)
+      elseif line == "" then
+        return response_headers, status_code
+      else
+        header_count = header_count + 1
+        if header_count > max_headers then
+          return close_and_fail(sock, ws, "too many response headers")
+        end
+
+        local name, value = line:match("^([^:]+):%s*(.*)")
+        if name then response_headers[name:lower()] = value end
+      end
+    end
+
+    if rerr then
+      local message = status_code and "failed reading headers: " or
+        "failed to read response: "
+      return close_and_fail(sock, ws, message .. tostring(rerr))
+    end
+  end
 end
 
 function M._validate_response(sock, ws, headers, key, protocols, pmd)

@@ -37,6 +37,8 @@ local function init_fields(self, options)
   self._auto_pong = options.auto_pong ~= false
   self._close_timeout = options.close_timeout or frame_mod.CLOSE_TIMEOUT
   self._max_payload = options.max_payload or (100 * 1024 * 1024)
+  self._max_response_header_size = options.max_response_header_size or 8192
+  self._max_response_headers = options.max_response_headers or 100
   self._skip_utf8_validation = options.skip_utf8_validation or false
 end
 

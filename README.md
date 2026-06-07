@@ -233,6 +233,8 @@ Create and connect in one call. Returns a connected WebSocket, or nil and an err
 | `auto_pong` | `true` | Automatically respond to pings |
 | `close_timeout` | `30` | Seconds to wait for close handshake |
 | `handshake_timeout` | `30` | Connection timeout in seconds |
+| `max_response_header_size` | `8192` | Maximum handshake response header size |
+| `max_response_headers` | `100` | Maximum handshake response header count |
 | `follow_redirects` | `false` | Follow HTTP redirects |
 | `max_redirects` | `10` | Maximum redirect count |
 | `per_message_deflate` | `true` | Enable compression (if lua-zlib available) |
