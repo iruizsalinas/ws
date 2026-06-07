@@ -101,7 +101,7 @@ function M.perform(ws, address, protocols, socket_lib)
 
   local response_headers, status_code, rerr =
     M._read_response(sock, ws)
-  if not response_headers then return nil, rerr end
+  if not response_headers then return nil, rerr or status_code end
 
   -- handle redirects
   if status_code >= 300 and status_code < 400 and ws._follow_redirects then
@@ -122,7 +122,7 @@ function M.perform(ws, address, protocols, socket_lib)
     return close_and_fail(sock, ws, "unexpected server response: " .. status_code)
   end
 
-  local verr = M._validate_response(
+  local _, verr = M._validate_response(
     sock, ws, response_headers, key, protocols, per_message_deflate)
   if verr then return nil, verr end
 

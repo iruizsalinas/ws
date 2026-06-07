@@ -195,4 +195,57 @@ T.check("unsolicited subprotocol rejected", ok_proto == nil and err_proto ~= nil
 T.check_equal("unsolicited subprotocol abort", ws2.aborted, "server sent an unsolicited subprotocol")
 T.check("unsolicited subprotocol closes socket", sock2.closed)
 
+local function make_client_socket()
+  return {
+    closed = false,
+    settimeout = function() end,
+    connect = function() return true end,
+    send = function() return true end,
+    close = function(self) self.closed = true end,
+  }
+end
+
+local fake_socket_lib = {
+  tcp = function() return make_client_socket() end,
+}
+
+do
+  local old_read_response = handshake._read_response
+  handshake._read_response = function()
+    return nil, "response headers too large"
+  end
+
+  local client_ws = make_mock_ws()
+  client_ws._per_message_deflate = false
+  client_ws._headers = {}
+  local ok, err = handshake.perform(client_ws, "ws://example.com", {}, fake_socket_lib)
+  T.check("perform returns response read error", ok == nil and err == "response headers too large")
+
+  handshake._read_response = old_read_response
+end
+
+do
+  local old_read_response = handshake._read_response
+  local old_validate_response = handshake._validate_response
+  handshake._read_response = function()
+    return {
+      upgrade = "websocket",
+      connection = "Upgrade",
+      ["sec-websocket-accept"] = expected_accept,
+    }, 101
+  end
+  handshake._validate_response = function()
+    return nil, "invalid Upgrade header"
+  end
+
+  local client_ws = make_mock_ws()
+  client_ws._per_message_deflate = false
+  client_ws._headers = {}
+  local ok, err = handshake.perform(client_ws, "ws://example.com", {}, fake_socket_lib)
+  T.check("perform returns response validation error", ok == nil and err == "invalid Upgrade header")
+
+  handshake._read_response = old_read_response
+  handshake._validate_response = old_validate_response
+end
+
 T.finish()
