@@ -253,8 +253,9 @@ function M:_read_handshake(client)
         state.method = method
         state.path = path
       elseif line == "" then
+        local leftover = state.buffer
         self._handshakes[client] = nil
-        self:_handle_upgrade(client, state.method, state.path, state.headers)
+        self:_handle_upgrade(client, state.method, state.path, state.headers, leftover)
         return
       else
         state.header_count = state.header_count + 1
@@ -281,7 +282,7 @@ function M:_read_handshake(client)
   end
 end
 
-function M:_handle_upgrade(socket, _method, path, headers)
+function M:_handle_upgrade(socket, _method, path, headers, leftover)
   local upgrade = headers["upgrade"]
   if not validation.header_has_token(upgrade, "websocket") then
     self:_abort_handshake(socket, 400, "Invalid Upgrade header")
@@ -362,10 +363,10 @@ function M:_handle_upgrade(socket, _method, path, headers)
     end
   end
 
-  self:_complete_upgrade(socket, key, protocols, headers, path, exts)
+  self:_complete_upgrade(socket, key, protocols, headers, path, exts, leftover)
 end
 
-function M:_complete_upgrade(socket, key, protocols, request_headers, path, exts)
+function M:_complete_upgrade(socket, key, protocols, request_headers, path, exts, leftover)
   if self._state ~= RUNNING then
     self:_abort_handshake(socket, 503, "Service Unavailable")
     return
@@ -431,10 +432,14 @@ function M:_complete_upgrade(socket, key, protocols, request_headers, path, exts
   self:_register_connection(ws)
 
   self:emit("connection", ws, { headers = request_headers, path = path })
+
+  if leftover and #leftover > 0 and ws._receiver then
+    ws._receiver:write(leftover)
+  end
 end
 
-function M:handle_upgrade(socket, method, path, headers)
-  self:_handle_upgrade(socket, method, path, headers)
+function M:handle_upgrade(socket, method, path, headers, leftover)
+  self:_handle_upgrade(socket, method, path, headers, leftover)
 end
 
 function M:_read_client(sock)

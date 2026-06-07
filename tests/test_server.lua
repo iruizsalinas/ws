@@ -222,4 +222,81 @@ T.check("complete handshake removed", server6._handshakes[complete_sock] == nil)
 
 WebSocket._create_from_server = original_create2
 
+local original_create3 = WebSocket._create_from_server
+local pipelined_leftover
+local pipelined_after_connection = false
+WebSocket._create_from_server = function(socket)
+  return {
+    _socket = socket,
+    protocol = "",
+    on = function() end,
+    _setup_socket = function(self)
+      self._receiver = {
+        write = function(_, data)
+          pipelined_leftover = data
+          pipelined_after_connection = self.connection_handler_ran == true
+        end,
+      }
+    end,
+  }
+end
+
+local pipelined_sock = make_chunk_socket({
+  "GET /chat HTTP/1.1\r\nHost: example.com\r\n",
+  "Upgrade: websocket\r\nConnection: Upgrade\r\n",
+  "Sec-WebSocket-Key: " .. valid_key .. "\r\nSec-WebSocket-Version: 13\r\n\r\n",
+  "FIRST-FRAME-BYTES",
+})
+local server7 = Server.new({ no_server = true })
+server7:on("connection", function(client)
+  client.connection_handler_ran = true
+end)
+server7._handshakes[pipelined_sock] = {
+  buffer = "",
+  headers = {},
+  header_count = 0,
+  size = 0,
+  deadline = os.time() + 5,
+}
+server7:_read_handshake(pipelined_sock)
+T.check_equal("pipelined bytes preserved", pipelined_leftover, "FIRST-FRAME-BYTES")
+T.check("pipelined bytes after connection event", pipelined_after_connection)
+
+WebSocket._create_from_server = original_create3
+
+local original_create4 = WebSocket._create_from_server
+local public_leftover
+local public_after_connection = false
+WebSocket._create_from_server = function(socket)
+  return {
+    _socket = socket,
+    protocol = "",
+    on = function() end,
+    _setup_socket = function(self)
+      self._receiver = {
+        write = function(_, data)
+          public_leftover = data
+          public_after_connection = self.connection_handler_ran == true
+        end,
+      }
+    end,
+  }
+end
+
+local public_sock = make_socket()
+local server8 = Server.new({ no_server = true })
+server8:on("connection", function(client)
+  client.connection_handler_ran = true
+end)
+server8:handle_upgrade(public_sock, "GET", "/", {
+  upgrade = "websocket",
+  connection = "Upgrade",
+  ["sec-websocket-key"] = valid_key,
+  ["sec-websocket-version"] = "13",
+}, "PUBLIC-FIRST-FRAME")
+T.check_equal("public upgrade preserves leftover", public_leftover, "PUBLIC-FIRST-FRAME")
+T.check("public upgrade leftover after connection event", public_after_connection)
+
+WebSocket._create_from_server = original_create4
+
 T.finish()
