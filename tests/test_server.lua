@@ -98,6 +98,28 @@ server1d:handle_upgrade(sock1d, "GET", "/", {
 })
 T.check("missing host status", sock1d.sent[1] and sock1d.sent[1]:find("400 Bad Request", 1, true) ~= nil)
 
+local server1d1 = Server.new({ no_server = true })
+local sock1d1 = make_socket()
+server1d1:handle_upgrade(sock1d1, "GET", "/", {
+  Host = "example.com:8080",
+  Upgrade = "websocket",
+  Connection = "Upgrade",
+  ["Sec-WebSocket-Key"] = valid_key,
+  ["Sec-WebSocket-Version"] = "13",
+})
+T.check("host with port accepted", sock1d1.sent[1] and sock1d1.sent[1]:find("101 Switching Protocols", 1, true) ~= nil)
+
+local server1d2 = Server.new({ no_server = true })
+local sock1d2 = make_socket()
+server1d2:handle_upgrade(sock1d2, "GET", "/", {
+  Host = "example.com, other.example",
+  Upgrade = "websocket",
+  Connection = "Upgrade",
+  ["Sec-WebSocket-Key"] = valid_key,
+  ["Sec-WebSocket-Version"] = "13",
+})
+T.check("duplicate host rejected", sock1d2.sent[1] and sock1d2.sent[1]:find("400 Bad Request", 1, true) ~= nil)
+
 -- RFC 6455 requires version 13; older draft versions are rejected
 local server1e = Server.new({ no_server = true })
 local sock1e = make_socket()
@@ -297,6 +319,38 @@ server5d._handshakes[mismatch_sock] = {
 }
 server5d:_read_handshake(mismatch_sock)
 T.check("absolute target host mismatch rejected", mismatch_sock.sent[1] and mismatch_sock.sent[1]:find("400 Bad Request", 1, true) ~= nil)
+
+local ipv6_host_sock = make_chunk_socket({
+  "GET /chat HTTP/1.1\r\nHost: [::1]:8080\r\n",
+  "Upgrade: websocket\r\nConnection: Upgrade\r\n",
+  "Sec-WebSocket-Key: " .. valid_key .. "\r\nSec-WebSocket-Version: 13\r\n\r\n",
+})
+local server5e = Server.new({ no_server = true })
+server5e._handshakes[ipv6_host_sock] = {
+  buffer = "",
+  headers = {},
+  header_count = 0,
+  size = 0,
+  deadline = os.time() + 5,
+}
+server5e:_read_handshake(ipv6_host_sock)
+T.check("IPv6 host with port accepted", ipv6_host_sock.sent[1] and ipv6_host_sock.sent[1]:find("101 Switching Protocols", 1, true) ~= nil)
+
+local folded_host_sock = make_chunk_socket({
+  "GET /chat HTTP/1.1\r\nHost: example.com\r\n",
+  " Upgrade\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n",
+  "Sec-WebSocket-Key: " .. valid_key .. "\r\nSec-WebSocket-Version: 13\r\n\r\n",
+})
+local server5f = Server.new({ no_server = true })
+server5f._handshakes[folded_host_sock] = {
+  buffer = "",
+  headers = {},
+  header_count = 0,
+  size = 0,
+  deadline = os.time() + 5,
+}
+server5f:_read_handshake(folded_host_sock)
+T.check("folded host rejected", folded_host_sock.sent[1] and folded_host_sock.sent[1]:find("400 Bad Request", 1, true) ~= nil)
 
 WebSocket._create_from_server = function(socket)
   return {

@@ -61,6 +61,33 @@ local function host_matches_authority(host, authority, default_port)
   return false
 end
 
+local function is_valid_host_header(host)
+  if type(host) ~= "string" then return false end
+  host = validation.trim_ows(host)
+  if host == "" or host:find("[ \t,]") then return false end
+
+  if host:sub(1, 1) == "[" then
+    local bracketed, rest_port = host:match("^%[([^%]]+)%](.*)$")
+    if not bracketed or bracketed == "" then return false end
+    if rest_port == "" then return true end
+    local port = rest_port:match("^:(%d+)$")
+    return port ~= nil and tonumber(port) >= 1 and tonumber(port) <= 65535
+  end
+
+  if host:find("[%[%]@]") then return false end
+
+  local first_colon = host:find(":", 1, true)
+  if first_colon then
+    if host:find(":", first_colon + 1, true) then return false end
+    local name = host:sub(1, first_colon - 1)
+    local port = host:sub(first_colon + 1)
+    return name ~= "" and port:match("^%d+$") ~= nil and
+      tonumber(port) >= 1 and tonumber(port) <= 65535
+  end
+
+  return true
+end
+
 local function normalize_headers(headers)
   local normalized = {}
   for name, value in pairs(headers or {}) do
@@ -391,7 +418,7 @@ function M:_handle_upgrade(socket, method, path, headers, leftover, expected_hos
     return
   end
 
-  if not headers["host"] or headers["host"] == "" then
+  if not is_valid_host_header(headers["host"]) then
     self:_abort_handshake(socket, 400)
     return
   end
