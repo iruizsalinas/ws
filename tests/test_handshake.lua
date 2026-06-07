@@ -57,6 +57,44 @@ local req_origin, _ = handshake._build_request(mock_ws, parsed80, "AAAAAAAAAAAAA
 T.check("has origin", req_origin:find("Origin: http://example.com") ~= nil)
 mock_ws._origin = nil
 
+mock_ws._origin = "http://example.com\r\nX-Evil: 1"
+T.check_error("reject origin CRLF", function()
+  handshake._build_request(mock_ws, parsed80, "AAAAAAAAAAAAAAAAAAAAAA==", {})
+end)
+mock_ws._origin = nil
+
+mock_ws._headers = { ["X-Test"] = "ok\r\nX-Evil: 1" }
+T.check_error("reject header value CRLF", function()
+  handshake._build_request(mock_ws, parsed80, "AAAAAAAAAAAAAAAAAAAAAA==", {})
+end)
+mock_ws._headers = { ["X-Test\r\nX-Evil"] = "ok" }
+T.check_error("reject header name CRLF", function()
+  handshake._build_request(mock_ws, parsed80, "AAAAAAAAAAAAAAAAAAAAAA==", {})
+end)
+mock_ws._headers = {}
+
+T.check_error("reject invalid subprotocol token", function()
+  handshake._build_request(mock_ws, parsed80, "AAAAAAAAAAAAAAAAAAAAAA==", { "bad proto" })
+end)
+
+do
+  local old_ssl = package.loaded.ssl
+  local captured
+  package.loaded.ssl = {
+    wrap = function(sock, params)
+      captured = params
+      return {
+        sni = function() end,
+        dohandshake = function() return true end,
+      }
+    end
+  }
+  local wrapped = handshake._wrap_tls({ close = function() end }, "example.com", { _tls_options = {} })
+  T.check("tls wrap succeeds with fake ssl", wrapped ~= nil)
+  T.check_equal("tls verifies peer by default", captured and captured.verify, "peer")
+  package.loaded.ssl = old_ssl
+end
+
 local function make_mock_socket()
   return {
     closed = false,

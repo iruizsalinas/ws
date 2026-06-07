@@ -220,6 +220,10 @@ function M:_get_payload_length_16()
   end
   local data = self:_consume(2)
   self._payload_length = buffer.read_uint16be(data)
+  if self._payload_length < 126 then
+    self:_error("non-minimal payload length encoding", 1002)
+    return
+  end
   self:_have_length()
 end
 
@@ -231,6 +235,16 @@ function M:_get_payload_length_64()
   local data = self:_consume(8)
   local high = buffer.read_uint32be(data, 1)
   local low = buffer.read_uint32be(data, 5)
+
+  if high >= 0x80000000 then
+    self:_error("invalid payload length", 1002)
+    return
+  end
+
+  if high == 0 and low < 65536 then
+    self:_error("non-minimal payload length encoding", 1002)
+    return
+  end
 
   -- reject > 2^53 - 1
   if high > 0x1FFFFF then

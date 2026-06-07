@@ -60,6 +60,15 @@ local p11 = url.parse("ws://192.168.1.1:8080/ws")
 T.check_equal("ip host", p11.host, "192.168.1.1")
 T.check_equal("ip port", p11.port, 8080)
 
+local bad_space, bad_space_err = url.parse("ws://host/a b")
+T.check("reject raw space in path", bad_space == nil and bad_space_err:find("request path"))
+
+local bad_ctl, bad_ctl_err = url.parse("ws://host/a\r\nX: 1")
+T.check("reject raw control in path", bad_ctl == nil and bad_ctl_err:find("request path"))
+
+local bad_port, bad_port_err = url.parse("ws://host:999999/path")
+T.check("reject invalid port", bad_port == nil and bad_port_err:find("port"))
+
 -- path with no query
 local p12 = url.parse("ws://host/just-path")
 T.check_equal("no query path", p12.path, "/just-path")

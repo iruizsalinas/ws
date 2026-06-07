@@ -100,4 +100,87 @@ T.check("invalid subprotocol closed", sock3.closed)
 
 WebSocket._create_from_server = original_create
 
+local function make_recv_socket(lines)
+  return {
+    sent = {},
+    closed = false,
+    timeout = nil,
+    receive_calls = 0,
+    send = function(self, data)
+      self.sent[#self.sent + 1] = data
+      return true
+    end,
+    close = function(self)
+      self.closed = true
+    end,
+    settimeout = function(self, value)
+      self.timeout = value
+    end,
+    receive = function(self)
+      self.receive_calls = self.receive_calls + 1
+      local item = table.remove(lines, 1)
+      if item == nil then return nil, "timeout", "" end
+      if type(item) == "table" then return nil, item[1], item[2] end
+      return item
+    end,
+  }
+end
+
+local slow_sock = make_recv_socket({})
+local server4 = Server.new({ no_server = true })
+server4._server = {
+  accept = function() return slow_sock end
+}
+server4:_accept_connection()
+T.check_equal("accepted handshake is nonblocking", slow_sock.timeout, 0)
+T.check("slow socket remains pending", server4._handshakes[slow_sock] ~= nil)
+T.check("slow socket not closed immediately", not slow_sock.closed)
+
+local big_sock = make_recv_socket({ { "timeout", string.rep("x", 9) } })
+local server5 = Server.new({ no_server = true, max_header_size = 8 })
+server5._handshakes[big_sock] = {
+  headers = {},
+  header_count = 0,
+  size = 0,
+  partial = "",
+  deadline = os.time() + 5,
+}
+server5:_read_handshake(big_sock)
+T.check("oversized partial header closed", big_sock.closed)
+T.check("oversized partial removed", server5._handshakes[big_sock] == nil)
+T.check("oversized partial status", big_sock.sent[1] and big_sock.sent[1]:find("431 Request Header Fields Too Large", 1, true) ~= nil)
+
+local original_create2 = WebSocket._create_from_server
+WebSocket._create_from_server = function(socket)
+  return {
+    _socket = socket,
+    protocol = "",
+    on = function() end,
+    _setup_socket = function() end,
+  }
+end
+
+local complete_sock = make_recv_socket({
+  "GET /chat HTTP/1.1",
+  "Host: example.com",
+  "Upgrade: websocket",
+  "Connection: Upgrade",
+  "Sec-WebSocket-Key: " .. valid_key,
+  "Sec-WebSocket-Version: 13",
+  "",
+})
+local server6 = Server.new({ no_server = true })
+server6._handshakes[complete_sock] = {
+  headers = {},
+  header_count = 0,
+  size = 0,
+  partial = "",
+  deadline = os.time() + 5,
+}
+server6:_read_handshake(complete_sock)
+T.check("complete handshake upgraded", complete_sock.sent[1] and complete_sock.sent[1]:find("101 Switching Protocols", 1, true) ~= nil)
+T.check("complete handshake removed", server6._handshakes[complete_sock] == nil)
+
+WebSocket._create_from_server = original_create2
+
 T.finish()

@@ -38,12 +38,16 @@ function M.new(options)
   self._path = options.path
   self._no_server = options.no_server or false
   self._client_tracking = options.client_tracking ~= false
+  self._handshake_timeout = options.handshake_timeout or 5
+  self._max_header_size = options.max_header_size or 8192
+  self._max_headers = options.max_headers or 100
 
   self._server = nil
   self._state = RUNNING
   self._socket_lib = nil
   self._connections = {}
   self._socket_map = {}
+  self._handshakes = {}
 
   if self._client_tracking then
     self.clients = {}
@@ -142,6 +146,10 @@ function M:poll(timeout)
     end
   end
 
+  for sock in pairs(self._handshakes) do
+    sockets[#sockets + 1] = sock
+  end
+
   if #sockets == 0 then return end
 
   local readable = self._socket_lib.select(sockets, nil, timeout or 0)
@@ -150,13 +158,20 @@ function M:poll(timeout)
   for _, sock in ipairs(readable) do
     if sock == self._server then
       self:_accept_connection()
+    elseif self._handshakes[sock] then
+      self:_read_handshake(sock)
     else
       self:_read_client(sock)
     end
   end
 
-  -- check close deadlines
+  -- check close and handshake deadlines
   local now = os.time()
+  for sock, state in pairs(self._handshakes) do
+    if now >= state.deadline then
+      self:_abort_handshake(sock, 408, "Request Timeout")
+    end
+  end
   for ws in pairs(self._connections) do
     if ws._close_deadline and now >= ws._close_deadline then
       ws:_destroy_socket()
@@ -177,36 +192,81 @@ function M:_accept_connection()
   local client, err = self._server:accept()
   if not client then return end
 
-  client:settimeout(5)
+  client:settimeout(0)
+  self._handshakes[client] = {
+    headers = {},
+    header_count = 0,
+    size = 0,
+    partial = "",
+    deadline = os.time() + self._handshake_timeout,
+  }
 
-  local line, lerr = client:receive("*l")
-  if not line then
-    client:close()
-    return
-  end
+  self:_read_handshake(client)
+end
 
-  local method, path = line:match("^(%u+)%s+(%S+)%s+HTTP/%d+%.%d+")
-  if not method then
-    self:_abort_handshake(client, 400, "Bad Request")
-    return
-  end
+function M:_read_handshake(client)
+  local state = self._handshakes[client]
+  if not state then return end
 
-  if method ~= "GET" then
-    self:_abort_handshake(client, 405, "Method Not Allowed")
-    return
-  end
-
-  local headers = {}
   while true do
-    local hline, herr = client:receive("*l")
-    if not hline or hline == "" then break end
-    local name, value = hline:match("^([^:]+):%s*(.*)")
-    if name then
-      headers[name:lower()] = value
+    local line, err, partial = client:receive("*l")
+
+    if not line then
+      if err == "timeout" then
+        if partial and #partial > 0 then
+          state.partial = state.partial .. partial
+          state.size = state.size + #partial
+          if state.size > self._max_header_size then
+            self:_abort_handshake(client, 431, "Request Header Fields Too Large")
+          end
+        end
+        return
+      end
+      self._handshakes[client] = nil
+      client:close()
+      return
+    end
+
+    line = state.partial .. line
+    state.partial = ""
+    state.size = state.size + #line + 2
+
+    if state.size > self._max_header_size then
+      self:_abort_handshake(client, 431, "Request Header Fields Too Large")
+      return
+    end
+
+    if not state.method then
+      local method, path = line:match("^(%u+)%s+(%S+)%s+HTTP/%d+%.%d+")
+      if not method then
+        self:_abort_handshake(client, 400, "Bad Request")
+        return
+      end
+
+      if method ~= "GET" then
+        self:_abort_handshake(client, 405, "Method Not Allowed")
+        return
+      end
+
+      state.method = method
+      state.path = path
+    elseif line == "" then
+      self._handshakes[client] = nil
+      self:_handle_upgrade(client, state.method, state.path, state.headers)
+      return
+    else
+      state.header_count = state.header_count + 1
+      if state.header_count > self._max_headers then
+        self:_abort_handshake(client, 431, "Request Header Fields Too Large")
+        return
+      end
+
+      local name, value = line:match("^([^:]+):%s*(.*)")
+      if name then
+        state.headers[name:lower()] = value
+      end
     end
   end
-
-  self:_handle_upgrade(client, method, path, headers)
 end
 
 function M:_handle_upgrade(socket, method, path, headers)
@@ -379,6 +439,8 @@ function M:_abort_handshake(socket, code, message, extra_headers)
     [403] = "Forbidden",
     [405] = "Method Not Allowed",
     [426] = "Upgrade Required",
+    [408] = "Request Timeout",
+    [431] = "Request Header Fields Too Large",
     [500] = "Internal Server Error",
     [503] = "Service Unavailable",
   })[code] or "Error"
@@ -400,6 +462,7 @@ function M:_abort_handshake(socket, code, message, extra_headers)
   headers[#headers + 1] = ""
   headers[#headers + 1] = body
 
+  self._handshakes[socket] = nil
   pcall(socket.send, socket, table.concat(headers, "\r\n"))
   pcall(socket.close, socket)
 end
@@ -420,6 +483,10 @@ function M:close(cb)
   if self._server then
     pcall(function() self._server:close() end)
     self._server = nil
+  end
+
+  for sock in pairs(self._handshakes) do
+    self:_abort_handshake(sock, 503, "Service Unavailable")
   end
 
   if not next(self._connections) then

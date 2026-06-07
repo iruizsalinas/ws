@@ -1,5 +1,9 @@
 local M = {}
 
+local function has_ctl_or_space(value)
+  return type(value) == "string" and value:find("[%z\1-\32\127]") ~= nil
+end
+
 function M.parse(url)
   local result = {}
 
@@ -55,6 +59,13 @@ function M.parse(url)
 
   result.host = host
   result.port = port and tonumber(port) or (result.secure and 443 or 80)
+  if not result.host or result.host == "" or has_ctl_or_space(result.host) then
+    return nil, "invalid URL: invalid host"
+  end
+  if not result.port or result.port < 1 or result.port > 65535 or
+     result.port ~= math.floor(result.port) then
+    return nil, "invalid URL: invalid port"
+  end
 
   -- split path and query
   local path, query = path_query:match("^([^?]*)?(.*)$")
@@ -68,6 +79,9 @@ function M.parse(url)
 
   if result.path == "" then
     result.path = "/"
+  end
+  if has_ctl_or_space(result.path) or (query and has_ctl_or_space(query)) then
+    return nil, "invalid URL: invalid request path"
   end
 
   -- reject fragments

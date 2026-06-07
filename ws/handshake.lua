@@ -9,6 +9,50 @@ local validation = require("ws.validation")
 
 local M = {}
 
+local function has_ctl(value)
+  return type(value) == "string" and value:find("[%z\1-\31\127]") ~= nil
+end
+
+local function validate_header_name(name)
+  if type(name) ~= "string" or name == "" then
+    return nil, "invalid HTTP header name"
+  end
+  for i = 1, #name do
+    local code = name:byte(i)
+    if code > 127 or validation.token_chars[code] ~= 1 then
+      return nil, "invalid HTTP header name"
+    end
+  end
+  return true
+end
+
+local function validate_header_value(value)
+  if has_ctl(value) then
+    return nil, "invalid HTTP header value"
+  end
+  return true
+end
+
+local function validate_token(value, what)
+  if type(value) ~= "string" or value == "" then
+    return nil, "invalid " .. what
+  end
+  for i = 1, #value do
+    local code = value:byte(i)
+    if code > 127 or validation.token_chars[code] ~= 1 then
+      return nil, "invalid " .. what
+    end
+  end
+  return true
+end
+
+local function validate_request_target(target)
+  if has_ctl(target) or target:find("[ \t]") then
+    return nil, "invalid URL request path"
+  end
+  return true
+end
+
 local function close_and_fail(sock, ws, msg)
   sock:close()
   ws:_abort(msg)
@@ -44,7 +88,10 @@ function M.perform(ws, address, protocols, socket_lib)
 
   local key = base64.encode(compat.random_bytes(16))
   local per_message_deflate
-  local request, pmd = M._build_request(ws, parsed, key, protocols)
+  local rok, request, pmd = pcall(M._build_request, ws, parsed, key, protocols)
+  if not rok then
+    return close_and_fail(sock, ws, request)
+  end
   per_message_deflate = pmd
 
   local ok3, serr = sock:send(request)
@@ -92,7 +139,7 @@ function M._wrap_tls(sock, host, ws)
   local tls_params = {
     mode = "client",
     protocol = ws._tls_options.protocol or "any",
-    verify = ws._tls_options.verify or "none",
+    verify = ws._tls_options.verify or "peer",
     options = { "all" },
   }
   for k, v in pairs(ws._tls_options) do
@@ -116,6 +163,9 @@ function M._wrap_tls(sock, host, ws)
 end
 
 function M._build_request(ws, parsed, key, protocols)
+  assert(validate_request_target(parsed.request_path))
+  assert(validate_header_value(parsed.host))
+
   local port_str = ""
   local default_port = parsed.secure and 443 or 80
   if parsed.port ~= default_port then
@@ -146,12 +196,18 @@ function M._build_request(ws, parsed, key, protocols)
   end
 
   if #protocols > 0 then
+    for _, protocol in ipairs(protocols) do
+      assert(validate_token(protocol, "subprotocol"))
+    end
     headers[#headers + 1] = "Sec-WebSocket-Protocol: " .. table.concat(protocols, ",")
   end
   if ws._origin then
+    assert(validate_header_value(ws._origin))
     headers[#headers + 1] = "Origin: " .. ws._origin
   end
   for k, v in pairs(ws._headers) do
+    assert(validate_header_name(k))
+    assert(validate_header_value(v))
     headers[#headers + 1] = k .. ": " .. v
   end
 

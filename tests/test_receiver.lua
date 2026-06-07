@@ -126,6 +126,25 @@ rx14:on("error", function(m) err14 = m end)
 rx14:write(string.char(0x89, 126) .. buffer.write_uint16be(126) .. string.rep("x", 126))
 T.check("reject control > 125", err14 and err14:find("payload length"))
 
+-- non-minimal extended lengths
+local rx14b = Receiver.new({ is_server = true })
+local err14b
+rx14b:on("error", function(m) err14b = m end)
+rx14b:write(string.char(0x81, 0x80 + 126) .. buffer.write_uint16be(125) .. "\0\0\0\0" .. string.rep("x", 125))
+T.check("reject non-minimal 16-bit length", err14b and err14b:find("non%-minimal"))
+
+local rx14c = Receiver.new({ is_server = true })
+local err14c
+rx14c:on("error", function(m) err14c = m end)
+rx14c:write(string.char(0x81, 0x80 + 127) .. buffer.write_uint32be(0) .. buffer.write_uint32be(65535) .. "\0\0\0\0")
+T.check("reject non-minimal 64-bit length", err14c and err14c:find("non%-minimal"))
+
+local rx14d = Receiver.new({ is_server = true })
+local err14d
+rx14d:on("error", function(m) err14d = m end)
+rx14d:write(string.char(0x81, 0x80 + 127) .. buffer.write_uint32be(0x80000000) .. buffer.write_uint32be(0) .. "\0\0\0\0")
+T.check("reject 64-bit length high bit", err14d and err14d:find("invalid payload length"))
+
 -- fragmented control frame
 local rx15 = Receiver.new({ is_server = false })
 local err15
