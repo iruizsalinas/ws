@@ -212,7 +212,7 @@ function M:_read_handshake(client)
 
   while true do
     local read_size = math.min(HANDSHAKE_CHUNK_SIZE,
-      self._max_header_size - state.size + 1)
+      self._max_header_size - state.size)
     if read_size <= 0 then
       self:_abort_handshake(client, 431, "Request Header Fields Too Large")
       return

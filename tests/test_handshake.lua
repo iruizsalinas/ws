@@ -103,6 +103,8 @@ local function make_mock_socket()
 end
 
 local function make_response_socket(chunks)
+  local buffer = table.concat(chunks)
+  local offset = 1
   return {
     closed = false,
     receive_calls = 0,
@@ -110,10 +112,10 @@ local function make_response_socket(chunks)
     receive = function(self, size)
       self.receive_calls = self.receive_calls + 1
       self.receive_sizes[#self.receive_sizes + 1] = size
-      local item = table.remove(chunks, 1)
-      if item == nil then return nil, "closed", "" end
-      if type(item) == "table" then return nil, item[1], item[2] end
-      return item
+      if offset > #buffer then return nil, "closed" end
+      local chunk = buffer:sub(offset, offset + size - 1)
+      offset = offset + #chunk
+      return chunk
     end,
     close = function(self) self.closed = true end,
   }
@@ -136,8 +138,16 @@ big_ws._max_response_header_size = 8
 local big_headers, big_err = handshake._read_response(big_sock, big_ws)
 T.check("large response header rejected", big_headers == nil and big_err ~= nil)
 T.check_equal("large response header abort", big_ws.aborted, "response headers too large")
-T.check_equal("large response header bounded read", big_sock.receive_sizes[1], 9)
+T.check_equal("large response header bounded read", big_sock.receive_calls, 8)
 T.check("large response header closes socket", big_sock.closed)
+
+local newline_limit_sock = make_response_socket({ "HTTP/1.1 101 Switching Protocols\r\n\r\n" })
+local newline_limit_ws = make_mock_ws()
+newline_limit_ws._max_response_header_size = 8
+local newline_limit_headers, newline_limit_err =
+  handshake._read_response(newline_limit_sock, newline_limit_ws)
+T.check("response limit checked before parsing", newline_limit_headers == nil and newline_limit_err ~= nil)
+T.check_equal("response limit newline abort", newline_limit_ws.aborted, "response headers too large")
 
 local many_chunks = { "HTTP/1.1 101 Switching Protocols\r\n" }
 for i = 1, 101 do

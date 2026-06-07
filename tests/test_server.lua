@@ -139,6 +139,8 @@ local function make_recv_socket(lines)
 end
 
 local function make_chunk_socket(chunks)
+  local buffer = table.concat(chunks)
+  local offset = 1
   return {
     sent = {},
     closed = false,
@@ -158,10 +160,10 @@ local function make_chunk_socket(chunks)
     receive = function(self, size)
       self.receive_calls = self.receive_calls + 1
       self.receive_sizes[#self.receive_sizes + 1] = size
-      local item = table.remove(chunks, 1)
-      if item == nil then return nil, "timeout", "" end
-      if type(item) == "table" then return nil, item[1], item[2] end
-      return item
+      if offset > #buffer then return nil, "timeout", "" end
+      local chunk = buffer:sub(offset, offset + size - 1)
+      offset = offset + #chunk
+      return chunk
     end,
   }
 end
@@ -189,7 +191,7 @@ server5:_read_handshake(big_sock)
 T.check("oversized chunk header closed", big_sock.closed)
 T.check("oversized chunk removed", server5._handshakes[big_sock] == nil)
 T.check("oversized chunk status", big_sock.sent[1] and big_sock.sent[1]:find("431 Request Header Fields Too Large", 1, true) ~= nil)
-T.check_equal("oversized chunk bounded read", big_sock.receive_sizes[1], 9)
+T.check_equal("oversized chunk bounded read", big_sock.receive_sizes[1], 8)
 
 local original_create2 = WebSocket._create_from_server
 WebSocket._create_from_server = function(socket)

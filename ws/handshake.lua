@@ -9,8 +9,6 @@ local validation = require("ws.validation")
 
 local M = {}
 
-local RESPONSE_CHUNK_SIZE = 1024
-
 local function has_ctl(value)
   return type(value) == "string" and value:find("[%z\1-\31\127]") ~= nil
 end
@@ -227,22 +225,16 @@ function M._read_response(sock, ws)
   local response_headers = {}
   local header_count = 0
 
-  while true do
-    local read_size = math.min(RESPONSE_CHUNK_SIZE, max_header_size - size + 1)
-    if read_size <= 0 then
-      return close_and_fail(sock, ws, "response headers too large")
+  while size < max_header_size do
+    local chunk, rerr = sock:receive(1)
+    if not chunk then
+      local message = status_code and "failed reading headers: " or
+        "failed to read response: "
+      return close_and_fail(sock, ws, message .. tostring(rerr))
     end
 
-    local chunk, rerr, partial = sock:receive(read_size)
-    chunk = chunk or partial
-
-    if chunk and #chunk > 0 then
-      size = size + #chunk
-      if size > max_header_size then
-        return close_and_fail(sock, ws, "response headers too large")
-      end
-      buffer = buffer .. chunk
-    end
+    size = size + 1
+    buffer = buffer .. chunk
 
     while true do
       local newline = buffer:find("\n", 1, true)
@@ -270,13 +262,9 @@ function M._read_response(sock, ws)
         if name then response_headers[name:lower()] = value end
       end
     end
-
-    if rerr then
-      local message = status_code and "failed reading headers: " or
-        "failed to read response: "
-      return close_and_fail(sock, ws, message .. tostring(rerr))
-    end
   end
+
+  return close_and_fail(sock, ws, "response headers too large")
 end
 
 function M._validate_response(sock, ws, headers, key, protocols, pmd)
