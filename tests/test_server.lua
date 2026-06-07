@@ -59,6 +59,18 @@ T.check("missing connection status", sock1.sent[1] and sock1.sent[1]:find("400 B
 T.check("missing connection body", sock1.sent[1] and sock1.sent[1]:find("Invalid Connection header", 1, true) ~= nil)
 T.check("missing connection closed", sock1.closed)
 
+-- non-canonical Sec-WebSocket-Key padding is rejected
+local server1b = Server.new({ no_server = true })
+local sock1b = make_socket()
+server1b:_handle_upgrade(sock1b, "GET", "/", {
+  upgrade = "websocket",
+  connection = "Upgrade",
+  ["sec-websocket-key"] = "AAAAAAAAAAAAAAAAAAAA====",
+  ["sec-websocket-version"] = "13",
+})
+T.check("bad key padding status", sock1b.sent[1] and sock1b.sent[1]:find("400 Bad Request", 1, true) ~= nil)
+T.check("bad key padding closed", sock1b.closed)
+
 -- client sockets are still polled when client_tracking is disabled
 local server2 = Server.new({ no_server = true, client_tracking = false })
 local sock2 = make_socket()
@@ -126,6 +138,34 @@ local function make_recv_socket(lines)
   }
 end
 
+local function make_chunk_socket(chunks)
+  return {
+    sent = {},
+    closed = false,
+    timeout = nil,
+    receive_calls = 0,
+    receive_sizes = {},
+    send = function(self, data)
+      self.sent[#self.sent + 1] = data
+      return true
+    end,
+    close = function(self)
+      self.closed = true
+    end,
+    settimeout = function(self, value)
+      self.timeout = value
+    end,
+    receive = function(self, size)
+      self.receive_calls = self.receive_calls + 1
+      self.receive_sizes[#self.receive_sizes + 1] = size
+      local item = table.remove(chunks, 1)
+      if item == nil then return nil, "timeout", "" end
+      if type(item) == "table" then return nil, item[1], item[2] end
+      return item
+    end,
+  }
+end
+
 local slow_sock = make_recv_socket({})
 local server4 = Server.new({ no_server = true })
 server4._server = {
@@ -136,19 +176,20 @@ T.check_equal("accepted handshake is nonblocking", slow_sock.timeout, 0)
 T.check("slow socket remains pending", server4._handshakes[slow_sock] ~= nil)
 T.check("slow socket not closed immediately", not slow_sock.closed)
 
-local big_sock = make_recv_socket({ { "timeout", string.rep("x", 9) } })
+local big_sock = make_chunk_socket({ string.rep("x", 9) })
 local server5 = Server.new({ no_server = true, max_header_size = 8 })
 server5._handshakes[big_sock] = {
+  buffer = "",
   headers = {},
   header_count = 0,
   size = 0,
-  partial = "",
   deadline = os.time() + 5,
 }
 server5:_read_handshake(big_sock)
-T.check("oversized partial header closed", big_sock.closed)
-T.check("oversized partial removed", server5._handshakes[big_sock] == nil)
-T.check("oversized partial status", big_sock.sent[1] and big_sock.sent[1]:find("431 Request Header Fields Too Large", 1, true) ~= nil)
+T.check("oversized chunk header closed", big_sock.closed)
+T.check("oversized chunk removed", server5._handshakes[big_sock] == nil)
+T.check("oversized chunk status", big_sock.sent[1] and big_sock.sent[1]:find("431 Request Header Fields Too Large", 1, true) ~= nil)
+T.check_equal("oversized chunk bounded read", big_sock.receive_sizes[1], 9)
 
 local original_create2 = WebSocket._create_from_server
 WebSocket._create_from_server = function(socket)
@@ -160,21 +201,17 @@ WebSocket._create_from_server = function(socket)
   }
 end
 
-local complete_sock = make_recv_socket({
-  "GET /chat HTTP/1.1",
-  "Host: example.com",
-  "Upgrade: websocket",
-  "Connection: Upgrade",
-  "Sec-WebSocket-Key: " .. valid_key,
-  "Sec-WebSocket-Version: 13",
-  "",
+local complete_sock = make_chunk_socket({
+  "GET /chat HTTP/1.1\r\nHost: example.com\r\n",
+  "Upgrade: websocket\r\nConnection: Upgrade\r\n",
+  "Sec-WebSocket-Key: " .. valid_key .. "\r\nSec-WebSocket-Version: 13\r\n\r\n",
 })
 local server6 = Server.new({ no_server = true })
 server6._handshakes[complete_sock] = {
+  buffer = "",
   headers = {},
   header_count = 0,
   size = 0,
-  partial = "",
   deadline = os.time() + 5,
 }
 server6:_read_handshake(complete_sock)

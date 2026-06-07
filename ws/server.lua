@@ -11,9 +11,11 @@ local WebSocket = require("ws.websocket")
 local RUNNING = 0
 local CLOSING = 1
 local CLOSED = 2
+local HANDSHAKE_CHUNK_SIZE = 1024
 
 local function is_valid_key(key)
-  return #key == 24 and key:match("^[A-Za-z0-9+/]+=*$") ~= nil
+  return type(key) == "string" and #key == 24 and
+         key:match("^[A-Za-z0-9+/]+==$") ~= nil
 end
 
 local M = {}
@@ -194,10 +196,10 @@ function M:_accept_connection()
 
   client:settimeout(0)
   self._handshakes[client] = {
+    buffer = "",
     headers = {},
     header_count = 0,
     size = 0,
-    partial = "",
     deadline = os.time() + self._handshake_timeout,
   }
 
@@ -209,62 +211,72 @@ function M:_read_handshake(client)
   if not state then return end
 
   while true do
-    local line, err, partial = client:receive("*l")
+    local read_size = math.min(HANDSHAKE_CHUNK_SIZE,
+      self._max_header_size - state.size + 1)
+    if read_size <= 0 then
+      self:_abort_handshake(client, 431, "Request Header Fields Too Large")
+      return
+    end
 
-    if not line then
-      if err == "timeout" then
-        if partial and #partial > 0 then
-          state.partial = state.partial .. partial
-          state.size = state.size + #partial
-          if state.size > self._max_header_size then
-            self:_abort_handshake(client, 431, "Request Header Fields Too Large")
-          end
+    local chunk, err, partial = client:receive(read_size)
+    chunk = chunk or partial
+
+    if chunk and #chunk > 0 then
+      state.size = state.size + #chunk
+      if state.size > self._max_header_size then
+        self:_abort_handshake(client, 431, "Request Header Fields Too Large")
+        return
+      end
+      state.buffer = state.buffer .. chunk
+    end
+
+    while true do
+      local newline = state.buffer:find("\n", 1, true)
+      if not newline then break end
+
+      local line = state.buffer:sub(1, newline - 1)
+      if line:sub(-1) == "\r" then line = line:sub(1, -2) end
+      state.buffer = state.buffer:sub(newline + 1)
+
+      if not state.method then
+        local method, path = line:match("^(%u+)%s+(%S+)%s+HTTP/%d+%.%d+")
+        if not method then
+          self:_abort_handshake(client, 400, "Bad Request")
+          return
         end
+
+        if method ~= "GET" then
+          self:_abort_handshake(client, 405, "Method Not Allowed")
+          return
+        end
+
+        state.method = method
+        state.path = path
+      elseif line == "" then
+        self._handshakes[client] = nil
+        self:_handle_upgrade(client, state.method, state.path, state.headers)
+        return
+      else
+        state.header_count = state.header_count + 1
+        if state.header_count > self._max_headers then
+          self:_abort_handshake(client, 431, "Request Header Fields Too Large")
+          return
+        end
+
+        local name, value = line:match("^([^:]+):%s*(.*)")
+        if name then
+          state.headers[name:lower()] = value
+        end
+      end
+    end
+
+    if err then
+      if err == "timeout" then
         return
       end
       self._handshakes[client] = nil
       client:close()
       return
-    end
-
-    line = state.partial .. line
-    state.partial = ""
-    state.size = state.size + #line + 2
-
-    if state.size > self._max_header_size then
-      self:_abort_handshake(client, 431, "Request Header Fields Too Large")
-      return
-    end
-
-    if not state.method then
-      local method, path = line:match("^(%u+)%s+(%S+)%s+HTTP/%d+%.%d+")
-      if not method then
-        self:_abort_handshake(client, 400, "Bad Request")
-        return
-      end
-
-      if method ~= "GET" then
-        self:_abort_handshake(client, 405, "Method Not Allowed")
-        return
-      end
-
-      state.method = method
-      state.path = path
-    elseif line == "" then
-      self._handshakes[client] = nil
-      self:_handle_upgrade(client, state.method, state.path, state.headers)
-      return
-    else
-      state.header_count = state.header_count + 1
-      if state.header_count > self._max_headers then
-        self:_abort_handshake(client, 431, "Request Header Fields Too Large")
-        return
-      end
-
-      local name, value = line:match("^([^:]+):%s*(.*)")
-      if name then
-        state.headers[name:lower()] = value
-      end
     end
   end
 end

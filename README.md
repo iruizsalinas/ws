@@ -250,6 +250,9 @@ Create and connect in one call. Returns a connected WebSocket, or nil and an err
 | `max_payload` | `104857600` | Maximum message size (100MB) |
 | `auto_pong` | `true` | Automatically respond to pings |
 | `close_timeout` | `30` | Close handshake timeout |
+| `handshake_timeout` | `5` | Seconds to wait for a complete opening handshake |
+| `max_header_size` | `8192` | Maximum handshake request header size |
+| `max_headers` | `100` | Maximum handshake request header count |
 | `client_tracking` | `true` | Track connected clients |
 | `per_message_deflate` | `false` | Enable compression |
 | `path` | `nil` | Accept only connections matching this path |

@@ -25,16 +25,32 @@ function M.parse(url)
 
   result.secure = result.protocol == "wss"
 
-  -- split auth from host
-  local auth_host, path_query = rest:match("^([^/]*)(/.*)$")
-  if not auth_host then
+  if rest:find("#", 1, true) then
+    return nil, "URL contains a fragment identifier"
+  end
+
+  -- split authority from path/query
+  local split_at = rest:find("[/?]")
+  local auth_host, path_query
+  if split_at then
+    auth_host = rest:sub(1, split_at - 1)
+    path_query = rest:sub(split_at)
+  else
     auth_host = rest
     path_query = "/"
   end
 
   -- extract userinfo
-  local userinfo, hostport = auth_host:match("^([^@]+)@(.+)$")
-  if userinfo then
+  local at
+  for i = 1, #auth_host do
+    if auth_host:sub(i, i) == "@" then at = i end
+  end
+  if at then
+    local userinfo = auth_host:sub(1, at - 1)
+    local hostport = auth_host:sub(at + 1)
+    if hostport == "" or has_ctl_or_space(userinfo) then
+      return nil, "invalid URL: invalid userinfo"
+    end
     local user, pass = userinfo:match("^([^:]*):(.*)$")
     if user then
       result.username = user
@@ -46,14 +62,35 @@ function M.parse(url)
   end
 
   -- parse host and port
-  local host, port = auth_host:match("^%[([^%]]+)%]:(%d+)$")
-  if not host then
-    host, port = auth_host:match("^%[([^%]]+)%]$")
-    if not host then
-      host, port = auth_host:match("^([^:]+):(%d+)$")
-      if not host then
-        host = auth_host
+  local host, port
+  if auth_host:sub(1, 1) == "[" then
+    local bracketed, rest_port = auth_host:match("^%[([^%]]+)%](.*)$")
+    if not bracketed or bracketed == "" then
+      return nil, "invalid URL: invalid host"
+    end
+    host = bracketed
+    if rest_port ~= "" then
+      port = rest_port:match("^:(%d+)$")
+      if not port then
+        return nil, "invalid URL: invalid port"
       end
+    end
+  else
+    if auth_host:find("[%[%]@]") then
+      return nil, "invalid URL: invalid host"
+    end
+    local first_colon = auth_host:find(":", 1, true)
+    if first_colon then
+      if auth_host:find(":", first_colon + 1, true) then
+        return nil, "invalid URL: invalid host"
+      end
+      host = auth_host:sub(1, first_colon - 1)
+      port = auth_host:sub(first_colon + 1)
+      if port == "" or not port:match("^%d+$") then
+        return nil, "invalid URL: invalid port"
+      end
+    else
+      host = auth_host
     end
   end
 
@@ -68,10 +105,10 @@ function M.parse(url)
   end
 
   -- split path and query
-  local path, query = path_query:match("^([^?]*)?(.*)$")
-  if path then
-    result.path = path
-    result.query = query
+  local query_at = path_query:find("?", 1, true)
+  if query_at then
+    result.path = path_query:sub(1, query_at - 1)
+    result.query = path_query:sub(query_at + 1)
   else
     result.path = path_query
     result.query = nil
@@ -82,11 +119,6 @@ function M.parse(url)
   end
   if has_ctl_or_space(result.path) or (query and has_ctl_or_space(query)) then
     return nil, "invalid URL: invalid request path"
-  end
-
-  -- reject fragments
-  if url:find("#") then
-    return nil, "URL contains a fragment identifier"
   end
 
   result.request_path = result.path
