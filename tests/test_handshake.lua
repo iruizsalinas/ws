@@ -47,6 +47,10 @@ local parsed80 = url.parse("ws://example.com/path")
 local req80, _ = handshake._build_request(mock_ws, parsed80, "AAAAAAAAAAAAAAAAAAAAAA==", {})
 T.check("default port omitted", req80:find("Host: example.com\r\n") ~= nil)
 
+local parsed_ipv6 = url.parse("ws://[::1]:8080/path")
+local req_ipv6, _ = handshake._build_request(mock_ws, parsed_ipv6, "AAAAAAAAAAAAAAAAAAAAAA==", {})
+T.check("IPv6 host bracketed", req_ipv6:find("Host: %[::1%]:8080\r\n") ~= nil)
+
 -- request with protocols
 local req_proto, _ = handshake._build_request(mock_ws, parsed80, "AAAAAAAAAAAAAAAAAAAAAA==", {"chat", "json"})
 T.check("has protocols", req_proto:find("Sec%-WebSocket%-Protocol: chat,json") ~= nil)
@@ -270,6 +274,38 @@ local ok_ws = make_mock_ws()
 local ok_headers, ok_code = handshake._read_response(ok_sock, ok_ws)
 T.check_equal("chunked response status", ok_code, 101)
 T.check_equal("chunked response header", ok_headers and ok_headers.upgrade, "websocket")
+
+local folded_response_sock = make_response_socket({
+  "HTTP/1.1 101 Switching Protocols\r\nConnection: keep-alive,\r\n",
+  " Upgrade\r\n\r\n",
+})
+local folded_response_ws = make_mock_ws()
+local folded_response_headers = handshake._read_response(folded_response_sock, folded_response_ws)
+T.check_equal("folded response header", folded_response_headers and folded_response_headers.connection, "keep-alive, Upgrade")
+
+local bad_response_sock = make_response_socket({
+  "HTTP/1.1 101 Switching Protocols\r\nBad Header\r\n\r\n",
+})
+local bad_response_ws = make_mock_ws()
+local bad_response_headers, bad_response_err = handshake._read_response(bad_response_sock, bad_response_ws)
+T.check("malformed response header rejected", bad_response_headers == nil and bad_response_err ~= nil)
+
+local dup_sock = make_response_socket({
+  "HTTP/1.1 101 Switching Protocols\r\nConnection: keep-alive\r\n",
+  "Connection: Upgrade\r\nSec-WebSocket-Accept:  " .. expected_accept .. " \t\r\n\r\n",
+})
+local dup_ws = make_mock_ws()
+local dup_headers, dup_code = handshake._read_response(dup_sock, dup_ws)
+T.check_equal("duplicate response status", dup_code, 101)
+T.check_equal("duplicate response header combined", dup_headers and dup_headers.connection, "keep-alive, Upgrade")
+local dup_validate_sock = make_mock_socket()
+local dup_validate_ws = make_mock_ws()
+local dup_ok = handshake._validate_response(dup_validate_sock, dup_validate_ws, {
+  upgrade = "websocket",
+  connection = dup_headers.connection,
+  ["sec-websocket-accept"] = dup_headers["sec-websocket-accept"],
+}, client_key, {}, nil)
+T.check("trimmed accept validates", dup_ok == nil and dup_validate_ws.aborted == nil)
 
 -- response validation requires Connection: Upgrade
 local sock1 = make_mock_socket()

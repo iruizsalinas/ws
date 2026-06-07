@@ -65,6 +65,25 @@ function M.header_has_token(value, expected)
   return false
 end
 
+function M.trim_ows(value)
+  return (value:gsub("^[ \t]+", ""):gsub("[ \t]+$", ""))
+end
+
+function M.has_invalid_header_value(value)
+  return type(value) ~= "string" or value:find("[%z\1-\8\10-\31\127]") ~= nil
+end
+
+function M.append_header(headers, name, value)
+  local lname = name:lower()
+  value = M.trim_ows(value)
+  if headers[lname] then
+    headers[lname] = headers[lname] .. ", " .. value
+  else
+    headers[lname] = value
+  end
+  return lname
+end
+
 function M.is_valid_status_code(code)
   return (code >= 1000 and code <= 1014 and
           code ~= 1004 and code ~= 1005 and code ~= 1006) or

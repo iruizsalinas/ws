@@ -69,6 +69,7 @@ function M.parse(url)
       return nil, "invalid URL: invalid host"
     end
     host = bracketed
+    result.host_bracketed = true
     if rest_port ~= "" then
       port = rest_port:match("^:(%d+)$")
       if not port then

@@ -51,6 +51,7 @@ end
 local server1 = Server.new({ no_server = true })
 local sock1 = make_socket()
 server1:_handle_upgrade(sock1, "GET", "/", {
+  host = "example.com",
   upgrade = "websocket",
   ["sec-websocket-key"] = valid_key,
   ["sec-websocket-version"] = "13",
@@ -64,6 +65,7 @@ T.check("missing connection closed", sock1.closed)
 local server1b = Server.new({ no_server = true })
 local sock1b = make_socket()
 server1b:_handle_upgrade(sock1b, "GET", "/", {
+  host = "example.com",
   upgrade = "websocket",
   connection = "Upgrade",
   ["sec-websocket-key"] = "AAAAAAAAAAAAAAAAAAAA====",
@@ -76,6 +78,7 @@ T.check("bad key padding closed", sock1b.closed)
 local server1c = Server.new({ no_server = true })
 local sock1c = make_socket()
 server1c:handle_upgrade(sock1c, "POST", "/", {
+  Host = "example.com",
   upgrade = "websocket",
   connection = "Upgrade",
   ["sec-websocket-key"] = valid_key,
@@ -83,6 +86,30 @@ server1c:handle_upgrade(sock1c, "POST", "/", {
 })
 T.check("public non-GET status", sock1c.sent[1] and sock1c.sent[1]:find("405 Method Not Allowed", 1, true) ~= nil)
 T.check("public non-GET closed", sock1c.closed)
+
+-- Host is required by the opening handshake
+local server1d = Server.new({ no_server = true })
+local sock1d = make_socket()
+server1d:handle_upgrade(sock1d, "GET", "/", {
+  upgrade = "websocket",
+  connection = "Upgrade",
+  ["sec-websocket-key"] = valid_key,
+  ["sec-websocket-version"] = "13",
+})
+T.check("missing host status", sock1d.sent[1] and sock1d.sent[1]:find("400 Bad Request", 1, true) ~= nil)
+
+-- RFC 6455 requires version 13; older draft versions are rejected
+local server1e = Server.new({ no_server = true })
+local sock1e = make_socket()
+server1e:handle_upgrade(sock1e, "GET", "/", {
+  Host = "example.com",
+  Upgrade = "websocket",
+  Connection = "Upgrade",
+  ["Sec-WebSocket-Key"] = valid_key,
+  ["Sec-WebSocket-Version"] = "8",
+})
+T.check("draft version status", sock1e.sent[1] and sock1e.sent[1]:find("426 Upgrade Required", 1, true) ~= nil)
+T.check("draft version advertises 13", sock1e.sent[1] and sock1e.sent[1]:find("Sec-WebSocket-Version: 13", 1, true) ~= nil)
 
 -- client sockets are still polled when client_tracking is disabled
 local server2 = Server.new({ no_server = true, client_tracking = false })
@@ -206,7 +233,71 @@ T.check("oversized chunk removed", server5._handshakes[big_sock] == nil)
 T.check("oversized chunk status", big_sock.sent[1] and big_sock.sent[1]:find("431 Request Header Fields Too Large", 1, true) ~= nil)
 T.check_equal("oversized chunk bounded read", big_sock.receive_sizes[1], 8)
 
+local http10_sock = make_chunk_socket({
+  "GET /chat HTTP/1.0\r\nHost: example.com\r\nUpgrade: websocket\r\n",
+  "Connection: Upgrade\r\nSec-WebSocket-Key: " .. valid_key .. "\r\n",
+  "Sec-WebSocket-Version: 13\r\n\r\n",
+})
+local server5b = Server.new({ no_server = true })
+server5b._handshakes[http10_sock] = {
+  buffer = "",
+  headers = {},
+  header_count = 0,
+  size = 0,
+  deadline = os.time() + 5,
+}
+server5b:_read_handshake(http10_sock)
+T.check("HTTP/1.0 rejected", http10_sock.sent[1] and http10_sock.sent[1]:find("400 Bad Request", 1, true) ~= nil)
+
 local original_create2 = WebSocket._create_from_server
+local folded_connection
+WebSocket._create_from_server = function(socket)
+  return {
+    _socket = socket,
+    protocol = "",
+    on = function() end,
+    _setup_socket = function() end,
+  }
+end
+local folded_sock = make_chunk_socket({
+  "GET http://example.com/chat?x=1 HTTP/1.1\r\nHost: example.com\r\n",
+  "Upgrade: websocket\r\nConnection: keep-alive\r\nConnection:\r\n",
+  " Upgrade\r\nSec-WebSocket-Key: " .. valid_key .. "\r\n",
+  "Sec-WebSocket-Version: 13\r\n\r\n",
+})
+local server5c = Server.new({ no_server = true, path = "/chat" })
+server5c:on("connection", function(_, req)
+  folded_connection = req
+end)
+server5c._handshakes[folded_sock] = {
+  buffer = "",
+  headers = {},
+  header_count = 0,
+  size = 0,
+  deadline = os.time() + 5,
+}
+server5c:_read_handshake(folded_sock)
+T.check("absolute target upgraded", folded_sock.sent[1] and folded_sock.sent[1]:find("101 Switching Protocols", 1, true) ~= nil)
+T.check_equal("absolute target normalized", folded_connection and folded_connection.path, "/chat?x=1")
+
+WebSocket._create_from_server = original_create2
+
+local mismatch_sock = make_chunk_socket({
+  "GET http://other.example/chat HTTP/1.1\r\nHost: example.com\r\n",
+  "Upgrade: websocket\r\nConnection: Upgrade\r\n",
+  "Sec-WebSocket-Key: " .. valid_key .. "\r\nSec-WebSocket-Version: 13\r\n\r\n",
+})
+local server5d = Server.new({ no_server = true })
+server5d._handshakes[mismatch_sock] = {
+  buffer = "",
+  headers = {},
+  header_count = 0,
+  size = 0,
+  deadline = os.time() + 5,
+}
+server5d:_read_handshake(mismatch_sock)
+T.check("absolute target host mismatch rejected", mismatch_sock.sent[1] and mismatch_sock.sent[1]:find("400 Bad Request", 1, true) ~= nil)
+
 WebSocket._create_from_server = function(socket)
   return {
     _socket = socket,
@@ -302,6 +393,7 @@ server8:on("connection", function(client)
   client.connection_handler_ran = true
 end)
 server8:handle_upgrade(public_sock, "GET", "/", {
+  Host = "example.com",
   upgrade = "websocket",
   connection = "Upgrade",
   ["sec-websocket-key"] = valid_key,

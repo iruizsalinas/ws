@@ -6,6 +6,7 @@ local extension = require("ws.extension")
 local subprotocol_mod = require("ws.subprotocol")
 local deflate_mod = require("ws.deflate")
 local validation = require("ws.validation")
+local url_mod = require("ws.url")
 local WebSocket = require("ws.websocket")
 
 local RUNNING = 0
@@ -16,6 +17,60 @@ local HANDSHAKE_CHUNK_SIZE = 1024
 local function is_valid_key(key)
   return type(key) == "string" and #key == 24 and
          key:match("^[A-Za-z0-9+/]+==$") ~= nil
+end
+
+local function is_valid_header_name(name)
+  if type(name) ~= "string" or name == "" then return false end
+  for i = 1, #name do
+    local code = name:byte(i)
+    if code > 127 or validation.token_chars[code] ~= 1 then
+      return false
+    end
+  end
+  return true
+end
+
+local function normalize_request_target(target)
+  if type(target) ~= "string" or target == "" or
+     validation.has_invalid_header_value(target) or target:find("[ \t]") then
+    return nil
+  end
+  if target:sub(1, 1) == "/" then
+    return target
+  end
+
+  local parsed = url_mod.parse(target)
+  if parsed and (parsed.protocol == "ws" or parsed.protocol == "wss") then
+    local authority = parsed.host_bracketed and
+      ("[" .. parsed.host:lower() .. "]") or parsed.host:lower()
+    local default_port = parsed.secure and 443 or 80
+    if parsed.port ~= default_port then
+      authority = authority .. ":" .. parsed.port
+    end
+    return parsed.request_path, authority, default_port
+  end
+  return nil
+end
+
+local function host_matches_authority(host, authority, default_port)
+  host = validation.trim_ows(host):lower()
+  if host == authority then return true end
+  if default_port and host == authority .. ":" .. default_port then
+    return true
+  end
+  return false
+end
+
+local function normalize_headers(headers)
+  local normalized = {}
+  for name, value in pairs(headers or {}) do
+    if not is_valid_header_name(name) or
+       validation.has_invalid_header_value(value) then
+      return nil
+    end
+    validation.append_header(normalized, name, value)
+  end
+  return normalized
 end
 
 local M = {}
@@ -239,8 +294,14 @@ function M:_read_handshake(client)
       state.buffer = state.buffer:sub(newline + 1)
 
       if not state.method then
-        local method, path = line:match("^(%u+)%s+(%S+)%s+HTTP/%d+%.%d+")
+        local method, path, major, minor =
+          line:match("^(%u+)%s+(%S+)%s+HTTP/(%d+)%.(%d+)$")
         if not method then
+          self:_abort_handshake(client, 400)
+          return
+        end
+
+        if tonumber(major) ~= 1 or tonumber(minor) < 1 then
           self:_abort_handshake(client, 400)
           return
         end
@@ -250,12 +311,22 @@ function M:_read_handshake(client)
           return
         end
 
+        local expected_host, expected_port
+        path, expected_host, expected_port = normalize_request_target(path)
+        if not path then
+          self:_abort_handshake(client, 400)
+          return
+        end
+
         state.method = method
         state.path = path
+        state.expected_host = expected_host
+        state.expected_port = expected_port
       elseif line == "" then
         local leftover = state.buffer
         self._handshakes[client] = nil
-        self:_handle_upgrade(client, state.method, state.path, state.headers, leftover)
+        self:_handle_upgrade(client, state.method, state.path, state.headers,
+          leftover, state.expected_host, state.expected_port)
         return
       else
         state.header_count = state.header_count + 1
@@ -264,9 +335,26 @@ function M:_read_handshake(client)
           return
         end
 
-        local name, value = line:match("^([^:]+):%s*(.*)")
-        if name then
-          state.headers[name:lower()] = value
+        if line:find("^[ \t]") then
+          if not state.last_header then
+            self:_abort_handshake(client, 400)
+            return
+          end
+          local value = state.headers[state.last_header] .. " " ..
+            validation.trim_ows(line)
+          if validation.has_invalid_header_value(value) then
+            self:_abort_handshake(client, 400)
+            return
+          end
+          state.headers[state.last_header] = value
+        else
+          local name, value = line:match("^([^:]+):(.*)")
+          if not name or not is_valid_header_name(name) or
+             validation.has_invalid_header_value(value) then
+            self:_abort_handshake(client, 400)
+            return
+          end
+          state.last_header = validation.append_header(state.headers, name, value)
         end
       end
     end
@@ -282,9 +370,33 @@ function M:_read_handshake(client)
   end
 end
 
-function M:_handle_upgrade(socket, method, path, headers, leftover)
+function M:_handle_upgrade(socket, method, path, headers, leftover, expected_host, expected_port)
+  headers = normalize_headers(headers)
+  if not headers then
+    self:_abort_handshake(socket, 400)
+    return
+  end
+
   if method ~= "GET" then
     self:_abort_handshake(socket, 405)
+    return
+  end
+
+  local parsed_expected_host, parsed_expected_port
+  path, parsed_expected_host, parsed_expected_port = normalize_request_target(path)
+  expected_host = expected_host or parsed_expected_host
+  expected_port = expected_port or parsed_expected_port
+  if not path then
+    self:_abort_handshake(socket, 400)
+    return
+  end
+
+  if not headers["host"] or headers["host"] == "" then
+    self:_abort_handshake(socket, 400)
+    return
+  end
+  if expected_host and not host_matches_authority(headers["host"], expected_host, expected_port) then
+    self:_abort_handshake(socket, 400)
     return
   end
 
@@ -307,8 +419,8 @@ function M:_handle_upgrade(socket, method, path, headers, leftover)
   end
 
   local version = tonumber(headers["sec-websocket-version"])
-  if version ~= 13 and version ~= 8 then
-    self:_abort_handshake(socket, 400, { ["Sec-WebSocket-Version"] = "13, 8" })
+  if version ~= 13 then
+    self:_abort_handshake(socket, 426, { ["Sec-WebSocket-Version"] = "13" })
     return
   end
 
@@ -458,6 +570,7 @@ function M:_abort_handshake(socket, code, extra_headers)
     [400] = "Bad Request",
     [401] = "Unauthorized",
     [405] = "Method Not Allowed",
+    [426] = "Upgrade Required",
     [408] = "Request Timeout",
     [431] = "Request Header Fields Too Large",
     [500] = "Internal Server Error",

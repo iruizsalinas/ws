@@ -106,7 +106,7 @@ local function validate_header_name(name)
 end
 
 local function validate_header_value(value)
-  if has_ctl(value) then
+  if validation.has_invalid_header_value(value) then
     return nil, "invalid HTTP header value"
   end
   return true
@@ -255,6 +255,11 @@ function M._build_request(ws, parsed, key, protocols)
   assert(validate_request_target(parsed.request_path))
   assert(validate_header_value(parsed.host))
 
+  local host = parsed.host
+  if parsed.host_bracketed then
+    host = "[" .. host .. "]"
+  end
+
   local port_str = ""
   local default_port = parsed.secure and 443 or 80
   if parsed.port ~= default_port then
@@ -263,7 +268,7 @@ function M._build_request(ws, parsed, key, protocols)
 
   local headers = {
     "GET " .. parsed.request_path .. " HTTP/1.1",
-    "Host: " .. parsed.host .. port_str,
+    "Host: " .. host .. port_str,
     "Upgrade: websocket",
     "Connection: Upgrade",
     "Sec-WebSocket-Version: 13",
@@ -340,6 +345,7 @@ function M._read_response(sock, ws)
         end
         status_code = tonumber(code)
       elseif line == "" then
+        response_headers._last_header = nil
         return response_headers, status_code
       else
         header_count = header_count + 1
@@ -347,8 +353,25 @@ function M._read_response(sock, ws)
           return close_and_fail(sock, ws, "too many response headers")
         end
 
-        local name, value = line:match("^([^:]+):%s*(.*)")
-        if name then response_headers[name:lower()] = value end
+        if line:find("^[ \t]") then
+          if not response_headers._last_header then
+            return close_and_fail(sock, ws, "invalid HTTP response header")
+          end
+          local value = response_headers[response_headers._last_header] ..
+            " " .. validation.trim_ows(line)
+          if not validate_header_value(value) then
+            return close_and_fail(sock, ws, "invalid HTTP response header")
+          end
+          response_headers[response_headers._last_header] = value
+        else
+          local name, value = line:match("^([^:]+):(.*)")
+          if not name or not validate_header_name(name) or
+             not validate_header_value(value) then
+            return close_and_fail(sock, ws, "invalid HTTP response header")
+          end
+          response_headers._last_header =
+            validation.append_header(response_headers, name, value)
+        end
       end
     end
   end
@@ -368,11 +391,14 @@ function M._validate_response(sock, ws, headers, key, protocols, pmd)
   end
 
   local expected = base64.encode(sha1_mod.sha1(key .. frame_mod.GUID))
-  if headers["sec-websocket-accept"] ~= expected then
+  local accept = headers["sec-websocket-accept"]
+  if accept then accept = validation.trim_ows(accept) end
+  if accept ~= expected then
     return close_and_fail(sock, ws, "invalid Sec-WebSocket-Accept header")
   end
 
   local server_proto = headers["sec-websocket-protocol"]
+  if server_proto then server_proto = validation.trim_ows(server_proto) end
   if server_proto then
     if #protocols == 0 then
       return close_and_fail(sock, ws, "server sent an unsolicited subprotocol")
