@@ -71,6 +71,18 @@ server1b:_handle_upgrade(sock1b, "GET", "/", {
 T.check("bad key padding status", sock1b.sent[1] and sock1b.sent[1]:find("400 Bad Request", 1, true) ~= nil)
 T.check("bad key padding closed", sock1b.closed)
 
+-- public handle_upgrade enforces GET like the built-in parser
+local server1c = Server.new({ no_server = true })
+local sock1c = make_socket()
+server1c:handle_upgrade(sock1c, "POST", "/", {
+  upgrade = "websocket",
+  connection = "Upgrade",
+  ["sec-websocket-key"] = valid_key,
+  ["sec-websocket-version"] = "13",
+})
+T.check("public non-GET status", sock1c.sent[1] and sock1c.sent[1]:find("405 Method Not Allowed", 1, true) ~= nil)
+T.check("public non-GET closed", sock1c.closed)
+
 -- client sockets are still polled when client_tracking is disabled
 local server2 = Server.new({ no_server = true, client_tracking = false })
 local sock2 = make_socket()

@@ -282,7 +282,12 @@ function M:_read_handshake(client)
   end
 end
 
-function M:_handle_upgrade(socket, _method, path, headers, leftover)
+function M:_handle_upgrade(socket, method, path, headers, leftover)
+  if method ~= "GET" then
+    self:_abort_handshake(socket, 405, "Method Not Allowed")
+    return
+  end
+
   local upgrade = headers["upgrade"]
   if not validation.header_has_token(upgrade, "websocket") then
     self:_abort_handshake(socket, 400, "Invalid Upgrade header")
