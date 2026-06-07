@@ -171,7 +171,7 @@ function M:poll(timeout)
   local now = os.time()
   for sock, state in pairs(self._handshakes) do
     if now >= state.deadline then
-      self:_abort_handshake(sock, 408, "Request Timeout")
+      self:_abort_handshake(sock, 408)
     end
   end
   for ws in pairs(self._connections) do
@@ -214,7 +214,7 @@ function M:_read_handshake(client)
     local read_size = math.min(HANDSHAKE_CHUNK_SIZE,
       self._max_header_size - state.size)
     if read_size <= 0 then
-      self:_abort_handshake(client, 431, "Request Header Fields Too Large")
+      self:_abort_handshake(client, 431)
       return
     end
 
@@ -224,7 +224,7 @@ function M:_read_handshake(client)
     if chunk and #chunk > 0 then
       state.size = state.size + #chunk
       if state.size > self._max_header_size then
-        self:_abort_handshake(client, 431, "Request Header Fields Too Large")
+        self:_abort_handshake(client, 431)
         return
       end
       state.buffer = state.buffer .. chunk
@@ -241,12 +241,12 @@ function M:_read_handshake(client)
       if not state.method then
         local method, path = line:match("^(%u+)%s+(%S+)%s+HTTP/%d+%.%d+")
         if not method then
-          self:_abort_handshake(client, 400, "Bad Request")
+          self:_abort_handshake(client, 400)
           return
         end
 
         if method ~= "GET" then
-          self:_abort_handshake(client, 405, "Method Not Allowed")
+          self:_abort_handshake(client, 405)
           return
         end
 
@@ -260,7 +260,7 @@ function M:_read_handshake(client)
       else
         state.header_count = state.header_count + 1
         if state.header_count > self._max_headers then
-          self:_abort_handshake(client, 431, "Request Header Fields Too Large")
+          self:_abort_handshake(client, 431)
           return
         end
 
@@ -284,39 +284,38 @@ end
 
 function M:_handle_upgrade(socket, method, path, headers, leftover)
   if method ~= "GET" then
-    self:_abort_handshake(socket, 405, "Method Not Allowed")
+    self:_abort_handshake(socket, 405)
     return
   end
 
   local upgrade = headers["upgrade"]
   if not validation.header_has_token(upgrade, "websocket") then
-    self:_abort_handshake(socket, 400, "Invalid Upgrade header")
+    self:_abort_handshake(socket, 400)
     return
   end
 
   local connection = headers["connection"]
   if not validation.header_has_token(connection, "upgrade") then
-    self:_abort_handshake(socket, 400, "Invalid Connection header")
+    self:_abort_handshake(socket, 400)
     return
   end
 
   local key = headers["sec-websocket-key"]
   if not key or not is_valid_key(key) or #base64.decode(key) ~= 16 then
-    self:_abort_handshake(socket, 400, "Missing or invalid Sec-WebSocket-Key header")
+    self:_abort_handshake(socket, 400)
     return
   end
 
   local version = tonumber(headers["sec-websocket-version"])
   if version ~= 13 and version ~= 8 then
-    self:_abort_handshake(socket, 400, "Missing or invalid Sec-WebSocket-Version header",
-      { ["Sec-WebSocket-Version"] = "13, 8" })
+    self:_abort_handshake(socket, 400, { ["Sec-WebSocket-Version"] = "13, 8" })
     return
   end
 
   if self._path then
     local req_path = path:match("^([^?]*)") or path
     if req_path ~= self._path then
-      self:_abort_handshake(socket, 400, "Bad Request")
+      self:_abort_handshake(socket, 400)
       return
     end
   end
@@ -327,7 +326,7 @@ function M:_handle_upgrade(socket, method, path, headers, leftover)
   if sec_protocol then
     local pok, parsed = pcall(subprotocol_mod.parse, sec_protocol)
     if not pok then
-      self:_abort_handshake(socket, 400, "Invalid Sec-WebSocket-Protocol header")
+      self:_abort_handshake(socket, 400)
       return
     end
     protocols = parsed
@@ -363,7 +362,7 @@ function M:_handle_upgrade(socket, method, path, headers, leftover)
     }
     local verified = self._verify_client(req_info)
     if not verified then
-      self:_abort_handshake(socket, 401, "Unauthorized")
+      self:_abort_handshake(socket, 401)
       return
     end
   end
@@ -373,7 +372,7 @@ end
 
 function M:_complete_upgrade(socket, key, protocols, request_headers, path, exts, leftover)
   if self._state ~= RUNNING then
-    self:_abort_handshake(socket, 503, "Service Unavailable")
+    self:_abort_handshake(socket, 503)
     return
   end
 
@@ -403,7 +402,7 @@ function M:_complete_upgrade(socket, key, protocols, request_headers, path, exts
     end
     if selected then
       if not contains_protocol(protocols, selected) then
-        self:_abort_handshake(socket, 500, "Invalid subprotocol selection")
+        self:_abort_handshake(socket, 500)
         return
       end
       response_headers[#response_headers + 1] =
@@ -454,25 +453,21 @@ function M:_read_client(sock)
   end
 end
 
-function M:_abort_handshake(socket, code, message, extra_headers)
+function M:_abort_handshake(socket, code, extra_headers)
   local status_text = ({
     [400] = "Bad Request",
     [401] = "Unauthorized",
-    [403] = "Forbidden",
     [405] = "Method Not Allowed",
-    [426] = "Upgrade Required",
     [408] = "Request Timeout",
     [431] = "Request Header Fields Too Large",
     [500] = "Internal Server Error",
     [503] = "Service Unavailable",
   })[code] or "Error"
 
-  local body = message or status_text
   local headers = {
     "HTTP/1.1 " .. code .. " " .. status_text,
     "Connection: close",
-    "Content-Type: text/plain",
-    "Content-Length: " .. #body,
+    "Content-Length: 0",
   }
 
   if extra_headers then
@@ -482,7 +477,7 @@ function M:_abort_handshake(socket, code, message, extra_headers)
   end
 
   headers[#headers + 1] = ""
-  headers[#headers + 1] = body
+  headers[#headers + 1] = ""
 
   self._handshakes[socket] = nil
   pcall(socket.send, socket, table.concat(headers, "\r\n"))
@@ -508,7 +503,7 @@ function M:close(cb)
   end
 
   for sock in pairs(self._handshakes) do
-    self:_abort_handshake(sock, 503, "Service Unavailable")
+    self:_abort_handshake(sock, 503)
   end
 
   if not next(self._connections) then

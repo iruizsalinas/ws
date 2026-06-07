@@ -56,7 +56,8 @@ server1:_handle_upgrade(sock1, "GET", "/", {
   ["sec-websocket-version"] = "13",
 })
 T.check("missing connection status", sock1.sent[1] and sock1.sent[1]:find("400 Bad Request", 1, true) ~= nil)
-T.check("missing connection body", sock1.sent[1] and sock1.sent[1]:find("Invalid Connection header", 1, true) ~= nil)
+T.check("missing connection empty body", sock1.sent[1] and sock1.sent[1]:find("Content-Length: 0", 1, true) ~= nil)
+T.check("missing connection no debug body", sock1.sent[1] and sock1.sent[1]:find("Invalid Connection header", 1, true) == nil)
 T.check("missing connection closed", sock1.closed)
 
 -- non-canonical Sec-WebSocket-Key padding is rejected
