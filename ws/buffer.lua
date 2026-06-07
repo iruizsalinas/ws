@@ -1,6 +1,6 @@
 local compat = require("ws.compat")
 local bxor = compat.bxor
-local byte, char, sub = string.byte, string.char, string.sub
+local byte, char = string.byte, string.char
 local concat = table.concat
 
 local M = {}

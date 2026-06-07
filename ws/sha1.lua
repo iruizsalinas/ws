@@ -1,9 +1,9 @@
 local compat = require("ws.compat")
 local band, bor, bxor, bnot = compat.band, compat.bor, compat.bxor, compat.bnot
-local lshift, rshift = compat.lshift, compat.rshift
+local rshift = compat.rshift
 local add32, rotl32 = compat.add32, compat.rotl32
 
-local byte, char, sub = string.byte, string.char, string.sub
+local byte, char = string.byte, string.char
 local concat = table.concat
 local floor = math.floor
 
@@ -86,10 +86,10 @@ local function sha1(msg)
     h4 = add32(h4, e)
   end
 
-  local function w32_to_bytes(w)
+  local function w32_to_bytes(word)
     return char(
-      band(rshift(w, 24), 0xFF), band(rshift(w, 16), 0xFF),
-      band(rshift(w, 8), 0xFF), band(w, 0xFF)
+      band(rshift(word, 24), 0xFF), band(rshift(word, 16), 0xFF),
+      band(rshift(word, 8), 0xFF), band(word, 0xFF)
     )
   end
 

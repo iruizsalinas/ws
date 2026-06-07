@@ -191,7 +191,7 @@ local function contains_protocol(protocols, selected)
 end
 
 function M:_accept_connection()
-  local client, err = self._server:accept()
+  local client = self._server:accept()
   if not client then return end
 
   client:settimeout(0)
@@ -281,7 +281,7 @@ function M:_read_handshake(client)
   end
 end
 
-function M:_handle_upgrade(socket, method, path, headers)
+function M:_handle_upgrade(socket, _method, path, headers)
   local upgrade = headers["upgrade"]
   if not validation.header_has_token(upgrade, "websocket") then
     self:_abort_handshake(socket, 400, "Invalid Upgrade header")
@@ -420,7 +420,7 @@ function M:_complete_upgrade(socket, key, protocols, request_headers, path, exts
   response_headers[#response_headers + 1] = ""
   local response = table.concat(response_headers, "\r\n")
 
-  local ok, err = socket:send(response)
+  local ok = socket:send(response)
   if not ok then
     socket:close()
     return

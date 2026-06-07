@@ -1,7 +1,7 @@
 local compat = require("ws.compat")
 local buffer = require("ws.buffer")
-local band, bor, rshift = compat.band, compat.bor, compat.rshift
-local byte, char = string.byte, string.char
+local bor = compat.bor
+local char = string.char
 local floor = math.floor
 
 local M = {}
@@ -28,7 +28,7 @@ function M.encode(data, options)
   if rsv1 then byte1 = bor(byte1, 0x40) end
 
   local len = #data
-  local byte2 = 0
+  local byte2
   local len_bytes = ""
 
   if len < 126 then
