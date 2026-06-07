@@ -148,6 +148,8 @@ local client = ws.client("wss://echo.example.com", {
 client:connect()
 ```
 
+Certificate and hostname verification are enabled by default. LuaSec may need `tls.cafile` or `tls.capath` to verify public certificates, depending on your platform and OpenSSL configuration.
+
 ### Ping/Pong
 
 ```lua

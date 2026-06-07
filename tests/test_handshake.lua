@@ -80,18 +80,118 @@ end)
 do
   local old_ssl = package.loaded.ssl
   local captured
+  local fake_cert = {
+    extensions = function()
+      return {
+        ["2.5.29.17"] = {
+          dNSName = { "example.com" },
+        },
+      }
+    end,
+    subject = function()
+      return {}
+    end,
+  }
   package.loaded.ssl = {
     wrap = function(sock, params)
       captured = params
       return {
         sni = function() end,
         dohandshake = function() return true end,
+        getpeercertificate = function() return fake_cert end,
+        close = function() end,
       }
     end
   }
   local wrapped = handshake._wrap_tls({ close = function() end }, "example.com", { _tls_options = {} })
   T.check("tls wrap succeeds with fake ssl", wrapped ~= nil)
   T.check_equal("tls verifies peer by default", captured and captured.verify, "peer")
+  package.loaded.ssl = old_ssl
+end
+
+do
+  local function cert(dns, cn, ip)
+    return {
+      extensions = function()
+        return {
+          ["2.5.29.17"] = {
+            dNSName = dns,
+            iPAddress = ip,
+          },
+        }
+      end,
+      subject = function()
+        return cn and {
+          { name = "commonName", value = cn },
+        } or {}
+      end,
+    }
+  end
+
+  T.check("hostname matches exact SAN",
+    handshake._verify_hostname(cert({ "example.com" }), "example.com"))
+  T.check("hostname matches wildcard SAN",
+    handshake._verify_hostname(cert({ "*.example.com" }), "api.example.com"))
+  T.check("hostname wildcard does not cross labels",
+    not handshake._verify_hostname(cert({ "*.example.com" }), "v1.api.example.com"))
+  T.check("hostname wildcard does not match bare domain",
+    not handshake._verify_hostname(cert({ "*.example.com" }), "example.com"))
+  T.check("hostname wildcard requires multi-label suffix",
+    not handshake._verify_hostname(cert({ "*.com" }), "example.com"))
+  T.check("hostname wildcard must be leftmost only",
+    not handshake._verify_hostname(cert({ "*.*.com" }), "api.example.com"))
+  T.check("hostname mismatch rejected",
+    not handshake._verify_hostname(cert({ "example.com" }), "other.example.com"))
+  T.check("hostname falls back to common name without SAN",
+    handshake._verify_hostname({
+      extensions = function() return {} end,
+      subject = function() return { { oid = "2.5.4.3", value = "example.com" } } end,
+    }, "example.com"))
+  T.check("hostname ignores common name when SAN exists",
+    not handshake._verify_hostname(cert({ "other.example.com" }, "example.com"), "example.com"))
+  T.check("hostname matches IP SAN",
+    handshake._verify_hostname(cert(nil, nil, { "127.0.0.1" }), "127.0.0.1"))
+  T.check("hostname rejects IP without IP SAN",
+    not handshake._verify_hostname(cert({ "127.0.0.1" }), "127.0.0.1"))
+end
+
+do
+  local old_ssl = package.loaded.ssl
+  local aborted
+  package.loaded.ssl = {
+    wrap = function()
+      return {
+        sni = function() end,
+        dohandshake = function() return true end,
+        getpeercertificate = function()
+          return {
+            extensions = function()
+              return {
+                ["2.5.29.17"] = {
+                  dNSName = { "example.com" },
+                },
+              }
+            end,
+            subject = function() return {} end,
+          }
+        end,
+        close = function() end,
+      }
+    end
+  }
+  local wrapped, err = handshake._wrap_tls({ close = function() end }, "wrong.example.com", {
+    _tls_options = {},
+    _abort = function(_, msg) aborted = msg end,
+  })
+  T.check("tls hostname mismatch fails", wrapped == nil and err == "TLS hostname verification failed")
+  T.check_equal("tls hostname mismatch aborts websocket", aborted, "TLS hostname verification failed")
+
+  local wrapped2, err2 = handshake._wrap_tls({ close = function() end }, "wrong.example.com", {
+    _tls_options = { verify = { "peer" } },
+    _abort = function() end,
+  })
+  T.check("tls table peer hostname mismatch fails", wrapped2 == nil and err2 == "TLS hostname verification failed")
+
   package.loaded.ssl = old_ssl
 end
 

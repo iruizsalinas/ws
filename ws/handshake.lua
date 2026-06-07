@@ -9,6 +9,85 @@ local validation = require("ws.validation")
 
 local M = {}
 
+local function is_ip_address(host)
+  return host:match("^%d+%.%d+%.%d+%.%d+$") ~= nil or
+         host:find(":", 1, true) ~= nil
+end
+
+local function hostname_matches(pattern, host)
+  pattern = pattern:lower()
+  host = host:lower()
+
+  if pattern == host then return true end
+  if pattern:sub(1, 2) ~= "*." then return false end
+  if pattern:find("*", 3, true) then return false end
+
+  local suffix = pattern:sub(3)
+  if suffix == "" or not suffix:find(".", 1, true) then return false end
+  if suffix:find("%.%.") or suffix:sub(1, 1) == "." or suffix:sub(-1) == "." then
+    return false
+  end
+
+  suffix = "." .. suffix
+  if host:sub(-#suffix) ~= suffix then return false end
+
+  local prefix = host:sub(1, #host - #suffix)
+  return prefix ~= "" and prefix:find(".", 1, true) == nil
+end
+
+local function get_common_name(cert)
+  local ok, subject = pcall(cert.subject, cert)
+  if not ok then return nil end
+  if type(subject) ~= "table" then return nil end
+  for _, entry in ipairs(subject) do
+    if entry.name == "commonName" or entry.oid == "2.5.4.3" then
+      return entry.value
+    end
+  end
+  return nil
+end
+
+local function verify_includes_peer(verify)
+  if verify == "peer" then return true end
+  if type(verify) ~= "table" then return false end
+
+  for _, value in ipairs(verify) do
+    if value == "peer" then return true end
+  end
+  return false
+end
+
+function M._verify_hostname(cert, host)
+  local ok, extensions = pcall(cert.extensions, cert)
+  if not ok then extensions = nil end
+
+  local san = type(extensions) == "table" and extensions["2.5.29.17"] or nil
+  if is_ip_address(host) then
+    local ip_names = type(san) == "table" and san.iPAddress or nil
+    if type(ip_names) == "string" then return ip_names == host end
+    if type(ip_names) == "table" then
+      for _, name in ipairs(ip_names) do
+        if name == host then return true end
+      end
+    end
+    return false
+  end
+
+  local dns_names = type(san) == "table" and san.dNSName or nil
+  if type(dns_names) == "string" then
+    return hostname_matches(dns_names, host)
+  end
+  if type(dns_names) == "table" then
+    for _, name in ipairs(dns_names) do
+      if hostname_matches(name, host) then return true end
+    end
+    return false
+  end
+
+  local common_name = get_common_name(cert)
+  return type(common_name) == "string" and hostname_matches(common_name, host)
+end
+
 local function has_ctl(value)
   return type(value) == "string" and value:find("[%z\1-\31\127]") ~= nil
 end
@@ -157,6 +236,16 @@ function M._wrap_tls(sock, host, ws)
     wrapped:close()
     ws:_abort("TLS handshake failed: " .. tostring(herr))
     return nil, herr
+  end
+
+  if verify_includes_peer(tls_params.verify) then
+    local cert = wrapped:getpeercertificate()
+    if not cert or not M._verify_hostname(cert, host) then
+      wrapped:close()
+      local msg = "TLS hostname verification failed"
+      ws:_abort(msg)
+      return nil, msg
+    end
   end
 
   return wrapped
