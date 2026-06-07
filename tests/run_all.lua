@@ -41,7 +41,7 @@ for _, file in ipairs(test_files) do
   local output = handle:read("*a")
   local ok = handle:close()
   io.write(output)
-  if not ok or output:find("^FAIL") then
+  if not ok or output:find("FAIL:", 1, true) then
     failed[#failed + 1] = file
   else
     total_pass = total_pass + 1

@@ -28,7 +28,7 @@ T.check_equal("roundtrip 0x00-0xFF",
   base64.decode(base64.encode(all_data)), all_data)
 
 -- 16-byte random-like data (websocket key size)
-local key_data = "\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x10"
+local key_data = string.char(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16)
 local encoded = base64.encode(key_data)
 T.check_equal("16-byte roundtrip", base64.decode(encoded), key_data)
 T.check_equal("16-byte encoded length", #encoded, 24)

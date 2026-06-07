@@ -16,14 +16,14 @@ T.check_equal("text len byte2", b2, 2)
 T.check_equal("text payload", encoded:sub(3), "hi")
 
 -- unmasked binary frame
-local bin = frame.encode("\x00\x01\x02", {
+local bin = frame.encode(string.char(0, 1, 2), {
   fin = true, opcode = frame.BINARY, mask = false, rsv1 = false
 })
 T.check_equal("binary byte1", string.byte(bin, 1), 0x82)
 T.check_equal("binary len", string.byte(bin, 2), 3)
 
 -- masked frame
-local mask_key = "\x37\xfa\x21\x3d"
+local mask_key = string.char(0x37, 0xFA, 0x21, 0x3D)
 local masked = frame.encode("Hi", {
   fin = true, opcode = frame.TEXT, mask = true, mask_key = mask_key, rsv1 = false
 })

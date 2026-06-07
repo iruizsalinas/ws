@@ -27,8 +27,8 @@ T.check_equal("text is_binary", is_bin, false)
 local rx2 = Receiver.new({ is_server = false })
 local bmsg, bbin
 rx2:on("message", function(d, b) bmsg = d; bbin = b end)
-rx2:write(make_frame(0x02, "\x00\x01\x02\x03"))
-T.check_equal("binary message", bmsg, "\x00\x01\x02\x03")
+rx2:write(make_frame(0x02, string.char(0, 1, 2, 3)))
+T.check_equal("binary message", bmsg, string.char(0, 1, 2, 3))
 T.check_equal("binary is_binary", bbin, true)
 
 -- close frame with code
@@ -81,7 +81,7 @@ T.check_equal("pong data", pong_data, "pong!")
 local rx8 = Receiver.new({ is_server = true })
 local m8
 rx8:on("message", function(d) m8 = d end)
-rx8:write(make_frame(0x01, "secret", true, "\x00\x00\x00\x00"))
+rx8:write(make_frame(0x01, "secret", true, string.char(0, 0, 0, 0)))
 T.check_equal("masked server", m8, "secret")
 
 -- reject unmasked in server mode
@@ -95,7 +95,7 @@ T.check("reject unmasked server", err9 and err9:find("MASK"))
 local rx10 = Receiver.new({ is_server = false })
 local err10
 rx10:on("error", function(m) err10 = m end)
-rx10:write(make_frame(0x01, "bad", true, "\xAA\xBB\xCC\xDD"))
+rx10:write(make_frame(0x01, "bad", true, string.char(0xAA, 0xBB, 0xCC, 0xDD)))
 T.check("reject masked client", err10 and err10:find("MASK"))
 
 -- RSV2 rejection

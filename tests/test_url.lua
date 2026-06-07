@@ -51,6 +51,12 @@ local p8, e8 = url.parse("ftp://host")
 T.check("invalid proto nil", p8 == nil)
 T.check("invalid proto err", e8 ~= nil)
 
+local p_query_space, e_query_space = url.parse("ws://example.com/a?b=c d")
+T.check("reject query space", p_query_space == nil and e_query_space ~= nil)
+
+local p_query_ctl, e_query_ctl = url.parse("ws://example.com/a?b=" .. string.char(13) .. "x")
+T.check("reject query control", p_query_ctl == nil and e_query_ctl ~= nil)
+
 -- fragment rejection
 local p9, e9 = url.parse("ws://host/path#frag")
 T.check("fragment nil", p9 == nil)

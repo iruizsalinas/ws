@@ -117,7 +117,8 @@ function M.parse(url)
   if result.path == "" then
     result.path = "/"
   end
-  if has_ctl_or_space(result.path) or (query and has_ctl_or_space(query)) then
+  if has_ctl_or_space(result.path) or
+     (result.query and has_ctl_or_space(result.query)) then
     return nil, "invalid URL: invalid request path"
   end
 

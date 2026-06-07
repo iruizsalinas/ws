@@ -12,7 +12,7 @@ T.check("mask changes data", masked ~= original)
 T.check("mask roundtrip", buffer.unmask(masked, key) == original)
 
 -- zero mask is identity
-T.check("zero mask identity", buffer.mask("test", "\x00\x00\x00\x00") == "test")
+T.check("zero mask identity", buffer.mask("test", string.char(0, 0, 0, 0)) == "test")
 
 -- empty data
 T.check("mask empty", buffer.mask("", "ABCD") == "")
@@ -21,7 +21,7 @@ T.check("mask empty", buffer.mask("", "ABCD") == "")
 local all_bytes = {}
 for i = 0, 255 do all_bytes[i + 1] = string.char(i) end
 local all_data = table.concat(all_bytes)
-local mask_key = "\x37\xfa\x21\x3d"
+local mask_key = string.char(0x37, 0xFA, 0x21, 0x3D)
 local masked_all = buffer.mask(all_data, mask_key)
 T.check_equal("mask all bytes length", #masked_all, 256)
 
@@ -38,7 +38,7 @@ T.check("XOR correctness all bytes", all_correct)
 T.check("mask all roundtrip", buffer.unmask(masked_all, mask_key) == all_data)
 
 -- different keys produce different wire bytes but same decoded
-local key2 = "\xAA\xBB\xCC\xDD"
+local key2 = string.char(0xAA, 0xBB, 0xCC, 0xDD)
 local masked1 = buffer.mask("hello", "ABCD")
 local masked2 = buffer.mask("hello", key2)
 T.check("different keys differ", masked1 ~= masked2)

@@ -74,10 +74,10 @@ end
 local rx4 = Receiver.new({ is_server = false })
 local frag4
 rx4:on("message", function(d, b) frag4 = { d, b } end)
-rx4:write(make_frame(0x02, "\x00\x01", false))
-rx4:write(make_frame(0x00, "\x02\x03", false))
-rx4:write(make_frame(0x00, "\x04\x05", true))
-T.check_equal("binary frag data", frag4[1], "\x00\x01\x02\x03\x04\x05")
+rx4:write(make_frame(0x02, string.char(0, 1), false))
+rx4:write(make_frame(0x00, string.char(2, 3), false))
+rx4:write(make_frame(0x00, string.char(4, 5), true))
+T.check_equal("binary frag data", frag4[1], string.char(0, 1, 2, 3, 4, 5))
 T.check_equal("binary frag is_binary", frag4[2], true)
 
 -- close frame with max-length reason (123 bytes)
