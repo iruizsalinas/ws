@@ -3,6 +3,10 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+# One release at a time; a second run waits instead of racing the first.
+concurrency:
+  group: release
+  cancel-in-progress: false
 jobs:
   ci:
     uses: ./.github/workflows/ci.yml
@@ -21,11 +25,13 @@ jobs:
         with:
           name: release
           path: dist
-      - name: Verify the release and install LuaRocks
+      - name: Check the API key is set
         env:
           LUAROCKS_API_KEY: ${{ secrets.LUAROCKS_API_KEY }}
+        run: test -n "$LUAROCKS_API_KEY"
+      # Builds third-party code, so the key is not in its environment.
+      - name: Verify the release and install LuaRocks
         run: |
-          test -n "$LUAROCKS_API_KEY"
           (cd dist && sha256sum --check SHA256SUMS)
           python .github/scripts/lua.py 5.4
           python .github/scripts/luarocks.py 5.4
