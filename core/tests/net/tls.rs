@@ -124,7 +124,9 @@ fn pem_text_is_accepted_and_never_echoed() {
         format!("{secret}\n{secret}\n"),
     ] {
         let error = tls::server(&read("server.pem"), &bad).unwrap_err();
-        assert!(error.contains("PEM text") && !error.contains(secret), "{error}");
+        // Never read as a path, and neither the text nor what it decodes to leaks.
+        assert!(!error.starts_with("cannot read"), "{error}");
+        assert!(!error.contains(secret) && !error.contains("secret-key"), "{error}");
     }
     // Paths are named in errors, so a typo is easy to spot.
     let error = tls::client(Some("missing-ca.pem")).unwrap_err();
