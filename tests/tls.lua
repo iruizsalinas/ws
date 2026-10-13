@@ -74,11 +74,12 @@ H.test("certificates and keys can be given as PEM text", function()
 end)
 
 H.test("errors about PEM text never echo it", function()
-  -- The header survives; the body after it is replaced.
-  local header = read("server-key.pem"):match("^[^\n]*\n")
-  local key = header .. string.rep("A", 64) .. "\n-----END PRIVATE KEY-----\n"
+  -- Well framed, so the body decodes and only fails as a key.
+  local label = read("server-key.pem"):match("^%-%-%-%-%-BEGIN ([^-]+)%-%-%-%-%-")
+  local secret = "c2VjcmV0LWtleS1tYXRlcmlhbA"
+  local key = "-----BEGIN " .. label .. "-----\n" .. secret .. "\n-----END " .. label .. "-----\n"
   local ok, err = pcall(ws.listen, { port = 0, tls = { cert = read("server.pem"), key = key } })
   H.eq(ok, false, "listen with a corrupt key")
-  assert(err:find("PEM text", 1, true), "error names the source: " .. err)
-  assert(not err:find("AAAA", 1, true) and not err:find("BEGIN", 1, true), "error leaked key material: " .. err)
+  assert(not err:find("cannot read", 1, true), "PEM text was read as a path: " .. err)
+  assert(not err:find(secret, 1, true) and not err:find("secret-key", 1, true), "error leaked key material: " .. err)
 end)
