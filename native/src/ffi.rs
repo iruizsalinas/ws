@@ -4,9 +4,9 @@
 //! Rust pointer. Returned strings belong to C, which releases them with
 //! `ws_free`: copying one into Lua can run finalizers that call back in.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
-use std::ffi::c_int;
+use std::ffi::{c_int, c_void};
 use std::sync::mpsc::SyncSender;
 use std::sync::{Arc, LazyLock, Mutex, MutexGuard};
 use ws_core::{Conn, Hub, Id, Reply, Server};
@@ -48,6 +48,19 @@ impl WsStr {
 
 thread_local! {
     static ERROR: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
+    // C owns these stack-local contexts; Rust only supplies thread-local
+    // storage, using the same runtime as the rest of the native module.
+    static COPY: Cell<*mut c_void> = const { Cell::new(std::ptr::null_mut()) };
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn ws_copy_context() -> *mut c_void {
+    COPY.with(Cell::get)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn ws_set_copy_context(context: *mut c_void) -> *mut c_void {
+    COPY.with(|c| c.replace(context))
 }
 
 /// Hands `bytes` to C, which releases them with `ws_free`.
@@ -109,3 +122,7 @@ pub fn with_conn(id: Id, f: impl FnOnce(&Conn) -> c_int) -> c_int {
         None => fail(SOFT, "closed"),
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/native/unit/strings.rs"]
+mod tests;

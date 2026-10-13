@@ -166,7 +166,9 @@ jobs:
           foreach ($v in $versions) {
             Write-Output "== Lua $v"
             & "$build\lua\$v\bin\lua.exe" tests/run.lua
+            python tests/native/strings.py --lua "$build\lua\$v\bin\lua.exe"
           }
+          python tests/native/abi.py
           New-Item -ItemType Directory -Force "bundles/win32-x86_64" | Out-Null
           Move-Item ws/core.dll "bundles/win32-x86_64/core.dll"
           python .github/scripts/luarocks.py 5.4
@@ -202,6 +204,7 @@ jobs:
         run: |
           luajit scripts/build.lua
           luajit tests/run.lua
+          python tests/native/strings.py --lua luajit
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: ${{ matrix.bundle }}

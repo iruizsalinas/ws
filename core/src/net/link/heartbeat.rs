@@ -81,5 +81,5 @@ impl Link {
 }
 
 #[cfg(test)]
-#[path = "../../../tests/unit/heartbeat.rs"]
+#[path = "../../../../tests/core/unit/heartbeat.rs"]
 mod tests;

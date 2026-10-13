@@ -10,7 +10,7 @@ assert(type(core) == "table", "ws.core cannot load into this Lua runtime")
 local timer = require("ws.timer")
 
 local loop = {
-  hub = core.hub(),
+  hub = false, -- reserved before allocating the native hub
   sockets = {}, -- id -> socket, until its close event
   servers = {}, -- id -> server, until closed
   handlers = {}, -- event kind -> function(id, data, code, server)
@@ -20,7 +20,9 @@ local loop = {
 
 -- When this Lua state closes, its sockets and servers end with it instead
 -- of running on in the host process.
-local function shutdown() core.shutdown(loop.hub) end
+local function shutdown()
+  if loop.hub then core.shutdown(loop.hub) end
+end
 if newproxy then -- Lua 5.1 and LuaJIT finalize only userdata
   loop.guard = newproxy(true)
   getmetatable(loop.guard).__gc = shutdown
@@ -96,4 +98,7 @@ function loop.check(ok, err, fatal)
   return ok, err
 end
 
+-- All Lua allocations and the cleanup guard precede the native resource.
+-- C stores the id in the existing slot before returning, too.
+loop.hub = core.hub(loop)
 return loop

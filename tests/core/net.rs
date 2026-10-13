@@ -12,5 +12,7 @@ mod heartbeat;
 mod limits;
 #[path = "net/raw.rs"]
 mod raw;
+#[path = "net/shutdown.rs"]
+mod shutdown;
 #[path = "net/tls.rs"]
 mod tls;

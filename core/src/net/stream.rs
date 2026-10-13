@@ -155,5 +155,5 @@ pub(crate) enum HeadError {
 
 // Included here to exercise deadlines without exposing handshake internals.
 #[cfg(test)]
-#[path = "../../tests/unit/stream.rs"]
+#[path = "../../../tests/core/unit/stream.rs"]
 mod tests;

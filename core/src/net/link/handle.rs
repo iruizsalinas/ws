@@ -124,5 +124,5 @@ impl Link {
 }
 
 #[cfg(test)]
-#[path = "../../../tests/unit/handle.rs"]
+#[path = "../../../../tests/core/unit/handle.rs"]
 mod tests;

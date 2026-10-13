@@ -2,6 +2,26 @@ use super::*;
 use std::sync::mpsc::{channel, sync_channel};
 
 #[test]
+fn closed_hubs_refuse_new_events() {
+    let (tx, rx) = channel();
+    let events = Events::from(tx);
+    let worker = events.clone();
+    events.close();
+    assert!(worker.send(Event::Close { id: 1, code: 1006, reason: String::new() }).is_err());
+    assert!(rx.try_recv().is_err());
+}
+
+#[test]
+fn a_closed_hub_still_releases_the_connection_slot_on_close() {
+    let count = Arc::new(AtomicUsize::new(0));
+    let (tx, _rx) = channel();
+    let events = Events::from(tx).admitted(Permit::acquire(&count, 1).unwrap());
+    events.close();
+    assert!(events.send(Event::Close { id: 1, code: 1006, reason: String::new() }).is_err());
+    assert!(Permit::acquire(&count, 1).is_some());
+}
+
+#[test]
 fn expired_requests_keep_capacity_until_their_events_are_drained() {
     let count = Arc::new(AtomicUsize::new(0));
     let (tx, rx) = channel();

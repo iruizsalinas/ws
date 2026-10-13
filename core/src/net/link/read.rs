@@ -66,6 +66,10 @@ impl Link {
             return self.fail(&e);
         }
         loop {
+            if self.events.closed() {
+                self.terminate();
+                break;
+            }
             if ok && !plain.is_empty() {
                 reader.push(&plain);
                 ok = self.dispatch(&mut reader);
@@ -141,5 +145,5 @@ impl Link {
 }
 
 #[cfg(test)]
-#[path = "../../../tests/unit/read.rs"]
+#[path = "../../../../tests/core/unit/read.rs"]
 mod tests;

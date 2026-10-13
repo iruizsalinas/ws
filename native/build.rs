@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::process::Command;
 
 fn main() {
-    for path in ["ws.c", "ws.h", "luaapi.h"] {
+    for path in ["ws.c", "calls.c", "values.c", "luaapi.c", "ws.h", "glue.h", "luaapi.h"] {
         println!("cargo::rerun-if-changed={path}");
     }
     for var in ["WS_GLUE", "WS_WERROR", "CC"] {
@@ -21,20 +21,23 @@ fn main() {
     }
     let os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     let (windows, macos) = (os == "windows", os == "macos");
-    let object = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR")).join("ws.o");
+    let out = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR"));
     let cc = env::var("CC").unwrap_or_else(|_| if windows { "gcc" } else { "cc" }.into());
-    let mut cmd = Command::new(&cc);
-    cmd.args(["-c", "-O2", "-std=c99", "-Wall", "-Wextra"]);
-    if env::var("WS_WERROR").as_deref() == Ok("1") {
-        cmd.arg("-Werror");
+    for source in ["ws", "calls", "values", "luaapi"] {
+        let object = out.join(format!("{source}.o"));
+        let mut cmd = Command::new(&cc);
+        cmd.args(["-c", "-O2", "-std=c99", "-Wall", "-Wextra"]);
+        if env::var("WS_WERROR").as_deref() == Ok("1") {
+            cmd.arg("-Werror");
+        }
+        if !windows {
+            cmd.arg("-fPIC");
+        }
+        cmd.arg(format!("{source}.c")).arg("-o").arg(&object);
+        let status = cmd.status().unwrap_or_else(|e| panic!("cannot run {cc}: {e}"));
+        assert!(status.success(), "compiling {source}.c failed");
+        println!("cargo::rustc-link-arg={}", object.display());
     }
-    if !windows {
-        cmd.arg("-fPIC");
-    }
-    cmd.arg("ws.c").arg("-o").arg(&object);
-    let status = cmd.status().unwrap_or_else(|e| panic!("cannot run {cc}: {e}"));
-    assert!(status.success(), "compiling ws.c failed");
-    println!("cargo::rustc-link-arg={}", object.display());
     if macos {
         // Lua's symbols come from the host interpreter at load time.
         println!("cargo::rustc-link-arg=-undefined");

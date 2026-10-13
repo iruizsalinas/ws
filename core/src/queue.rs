@@ -63,10 +63,13 @@ impl Events {
         // A retained closed Conn must not retain capacity forever. The final
         // event and the network worker still own their slots until drained.
         let slot = if matches!(event, Event::Close { .. }) { permit.take() } else { permit.clone() };
+        if self.closed() {
+            return Err(());
+        }
         self.tx.send(Queued { event, _permit: slot }).map_err(|_| ())
     }
 }
 
 #[cfg(test)]
-#[path = "../tests/unit/queue.rs"]
+#[path = "../../tests/core/unit/queue.rs"]
 mod tests;

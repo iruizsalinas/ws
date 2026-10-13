@@ -30,6 +30,9 @@ typedef struct {
 
 ws_str ws_error(void);
 void ws_free(ws_str s);
+/* Opaque, stack-local conversion contexts; used only by the C glue. */
+void *ws_copy_context(void);
+void *ws_set_copy_context(void *context);
 uint64_t ws_hub(void);
 void ws_shutdown(uint64_t hub);
 double ws_now(void);

@@ -13,8 +13,10 @@ done
 for v in $versions; do
   echo "== Lua $v"
   ".build/lua/$v/bin/lua" tests/run.lua
+  python tests/native/strings.py --lua ".build/lua/$v/bin/lua"
 done
 os=$(uname -s | sed 's/Linux/linux/; s/Darwin/macosx/')
+python tests/native/abi.py
 arch=$(uname -m | sed 's/aarch64/arm64/')
 mkdir -p "bundles/$os-$arch"
 mv ws/core.so "bundles/$os-$arch/core.so"
