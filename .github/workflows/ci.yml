@@ -1,0 +1,143 @@
+name: CI
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+permissions:
+  contents: read
+jobs:
+  rust:
+    name: Rust / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-15, windows-2022]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+      - name: Lint
+        if: runner.os == 'Linux'
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Test
+        run: cargo test --workspace --locked
+
+  bundle:
+    name: ${{ matrix.os }} / Lua ${{ matrix.lua }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-22.04-arm, macos-15-intel, macos-15, windows-2022]
+        lua: ['5.1', '5.2', '5.3', '5.4', '5.5']
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '11.0'
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.13'
+      - name: Rust
+        shell: bash
+        run: |
+          if ! command -v rustup >/dev/null; then
+            curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          fi
+      - name: Windows toolchain
+        id: msys2
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e # v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: mingw-w64-x86_64-gcc
+      - name: Build and test (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          v='${{ matrix.lua }}'
+          lua=".build/lua/$v/bin/lua"
+          python .github/scripts/lua.py "$v"
+          "$lua" scripts/build.lua ".build/lua/$v/include"
+          "$lua" tests/run.lua
+          os=$(uname -s | sed 's/Linux/linux/; s/Darwin/macosx/')
+          arch=$(uname -m | sed 's/aarch64/arm64/')
+          mkdir -p "bundles/$os-$arch/$v"
+          cp ws/core.so "bundles/$os-$arch/$v/core.so"
+          rm ws/core.so
+          python .github/scripts/luarocks.py "$v"
+          python .github/scripts/package.py --partial
+          python .github/scripts/install.py --lua "$lua" --luarocks .build/luarocks/bin/luarocks
+      - name: Build and test (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          MSYS2_LOCATION: ${{ steps.msys2.outputs.msys2-location }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          # MinGW gcc only: MSYS2's usr\bin has a link.exe that shadows MSVC's.
+          $env:PATH = "$env:MSYS2_LOCATION\mingw64\bin;" + $env:PATH
+          rustup toolchain install stable-x86_64-pc-windows-gnu --profile minimal
+          $env:RUSTUP_TOOLCHAIN = 'stable-x86_64-pc-windows-gnu'
+          $v = '${{ matrix.lua }}'
+          $dir = (Resolve-Path ".build").Path + "\lua\$v"
+          python .github/scripts/lua.py $v
+          $lua = "$dir\bin\lua.exe"
+          & $lua scripts/build.lua "$dir\include" "$dir\bin\lua$($v -replace '\.', '').dll"
+          & $lua tests/run.lua
+          New-Item -ItemType Directory -Force "bundles/win32-x86_64/$v" | Out-Null
+          Move-Item ws/core.dll "bundles/win32-x86_64/$v/core.dll"
+          python .github/scripts/luarocks.py $v
+          python .github/scripts/package.py --partial
+          python .github/scripts/install.py --lua $lua --luarocks .build/luarocks/luarocks-3.13.0-windows-64/luarocks.exe
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: bundle-${{ matrix.os }}-${{ matrix.lua }}
+          path: bundles/
+          if-no-files-found: error
+
+  luajit:
+    name: LuaJIT / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-15]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+      - name: Install LuaJIT
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then sudo apt-get install -y luajit libluajit-5.1-dev; else brew install luajit; fi
+      - name: Build and test
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then include=/usr/include/luajit-2.1; else include="$(brew --prefix luajit)/include/luajit-2.1"; fi
+          luajit scripts/build.lua "$include"
+          luajit tests/run.lua
+
+  assemble:
+    needs: [rust, bundle, luajit]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.13'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: bundle-*
+          path: bundles
+          merge-multiple: true
+      - name: Package every bundle
+        run: python .github/scripts/package.py
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release
+          path: |
+            dist/*.tar.gz
+            dist/*.src.rock
+            dist/SHA256SUMS
+          if-no-files-found: error

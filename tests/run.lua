@@ -1,0 +1,10 @@
+-- Runs the Lua test suite against the built module in ws/.
+--   lua tests/run.lua
+package.path = "./?.lua;./?/init.lua;" .. package.path
+package.cpath = "./?.so;./?.dll;" .. package.cpath
+
+local H = require("tests.helper")
+for _, name in ipairs({ "echo", "close", "server", "errors", "timers", "tls" }) do
+  require("tests." .. name)
+end
+os.exit(H.report() and 0 or 1)

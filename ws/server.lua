@@ -1,663 +1,103 @@
+-- Servers: `ws.listen`, upgrade decisions and accepted connections.
+local core = require("ws.core")
 local emitter = require("ws.emitter")
-local sha1_mod = require("ws.sha1")
-local base64 = require("ws.base64")
-local frame_mod = require("ws.frame")
-local extension = require("ws.extension")
-local subprotocol_mod = require("ws.subprotocol")
-local deflate_mod = require("ws.deflate")
-local validation = require("ws.validation")
-local url_mod = require("ws.url")
-local WebSocket = require("ws.websocket")
+local loop = require("ws.loop")
+local opts = require("ws.opts")
+local Socket = require("ws.socket")
 
-local RUNNING = 0
-local CLOSING = 1
-local CLOSED = 2
-local HANDSHAKE_CHUNK_SIZE = 1024
+local EVENTS = { connection = true }
+local OPTIONS = {
+  port = "port", host = "string", protocols = "list", accept = "function",
+  max_payload = "size", cert = "string", key = "string",
+}
 
-local function is_valid_key(key)
-  return type(key) == "string" and #key == 24 and
-         key:match("^[A-Za-z0-9+/]+==$") ~= nil
+local Server = {}
+Server.__index = Server
+Server.__tostring = function(s) return "ws.server (port " .. s.port .. ")" end
+
+-- `ws.listen(port)` or `ws.listen{...}`; raises if the port cannot be bound.
+function Server.listen(arg)
+  local o = opts.check(type(arg) == "table" and arg or { port = arg }, OPTIONS, 2)
+  if o.port == nil then
+    error("option 'port' is required", 2)
+  end
+  local id, err = core.listen(loop.hub, o.host or "0.0.0.0", o.port, o.cert, o.key, o.max_payload)
+  if not id then
+    error(err, 2)
+  end
+  local protocols = {}
+  for _, p in ipairs(o.protocols or {}) do
+    protocols[p] = true
+  end
+  local s = setmetatable({ id = id, port = core.port(id), accept = o.accept, protocols = protocols, _on = {} }, Server)
+  loop.servers[id] = s
+  return s
 end
 
-local function is_valid_header_name(name)
-  if type(name) ~= "string" or name == "" then return false end
-  for i = 1, #name do
-    local code = name:byte(i)
-    if code > 127 or validation.token_chars[code] ~= 1 then
-      return false
-    end
-  end
-  return true
-end
-
-local function normalize_request_target(target)
-  if type(target) ~= "string" or target == "" or
-     validation.has_invalid_header_value(target) or target:find("[ \t]") then
-    return nil
-  end
-  if target:sub(1, 1) == "/" then
-    return target
-  end
-
-  local parsed = url_mod.parse(target)
-  if parsed and (parsed.protocol == "ws" or parsed.protocol == "wss") then
-    local authority = parsed.host_bracketed and
-      ("[" .. parsed.host:lower() .. "]") or parsed.host:lower()
-    local default_port = parsed.secure and 443 or 80
-    if parsed.port ~= default_port then
-      authority = authority .. ":" .. parsed.port
-    end
-    return parsed.request_path, authority, default_port
-  end
-  return nil
-end
-
-local function host_matches_authority(host, authority, default_port)
-  host = validation.trim_ows(host):lower()
-  if host == authority then return true end
-  if default_port and host == authority .. ":" .. default_port then
-    return true
-  end
-  return false
-end
-
-local function is_valid_host_header(host)
-  if type(host) ~= "string" then return false end
-  host = validation.trim_ows(host)
-  if host == "" or host:find("[ \t,]") then return false end
-
-  if host:sub(1, 1) == "[" then
-    local bracketed, rest_port = host:match("^%[([^%]]+)%](.*)$")
-    if not bracketed or bracketed == "" then return false end
-    if rest_port == "" then return true end
-    local port = rest_port:match("^:(%d+)$")
-    return port ~= nil and tonumber(port) >= 1 and tonumber(port) <= 65535
-  end
-
-  if host:find("[%[%]@]") then return false end
-
-  local first_colon = host:find(":", 1, true)
-  if first_colon then
-    if host:find(":", first_colon + 1, true) then return false end
-    local name = host:sub(1, first_colon - 1)
-    local port = host:sub(first_colon + 1)
-    return name ~= "" and port:match("^%d+$") ~= nil and
-      tonumber(port) >= 1 and tonumber(port) <= 65535
-  end
-
-  return true
-end
-
-local function normalize_headers(headers)
-  local normalized = {}
-  for name, value in pairs(headers or {}) do
-    if not is_valid_header_name(name) or
-       validation.has_invalid_header_value(value) then
-      return nil
-    end
-    validation.append_header(normalized, name, value)
-  end
-  return normalized
-end
-
-local M = {}
-M.__index = M
-emitter.mixin(M)
-
-function M.new(options)
-  local self = setmetatable({}, M)
-  emitter.init(self)
-
-  options = options or {}
-  self._host = options.host or "0.0.0.0"
-  self._port = options.port
-  self._backlog = options.backlog or 511
-  self._max_payload = options.max_payload or (100 * 1024 * 1024)
-  self._auto_pong = options.auto_pong ~= false
-  self._close_timeout = options.close_timeout or frame_mod.CLOSE_TIMEOUT
-  self._skip_utf8_validation = options.skip_utf8_validation or false
-  self._per_message_deflate = options.per_message_deflate or false
-  self._verify_client = options.verify_client
-  self._handle_protocols = options.handle_protocols
-  self._path = options.path
-  self._no_server = options.no_server or false
-  self._client_tracking = options.client_tracking ~= false
-  self._handshake_timeout = options.handshake_timeout or 5
-  self._max_header_size = options.max_header_size or 8192
-  self._max_headers = options.max_headers or 100
-
-  self._server = nil
-  self._state = RUNNING
-  self._socket_lib = nil
-  self._connections = {}
-  self._socket_map = {}
-  self._handshakes = {}
-
-  if self._client_tracking then
-    self.clients = {}
-  end
-
-  if self._per_message_deflate == true then
-    self._per_message_deflate = {}
-  end
-
+function Server:on(name, fn)
+  emitter.on(self, EVENTS, name, fn)
   return self
 end
 
-function M:_register_connection(ws)
-  self._connections[ws] = true
-  self._socket_map[ws._socket] = ws
-
-  if self._client_tracking then
-    self.clients[ws] = true
-  end
-
-  ws:on("close", function()
-    self:_unregister_connection(ws)
-  end)
-end
-
-function M:_unregister_connection(ws)
-  self._connections[ws] = nil
-  if ws._socket then
-    self._socket_map[ws._socket] = nil
-  end
-
-  if self._client_tracking then
-    self.clients[ws] = nil
-  end
-
-  if self._state == CLOSING and not next(self._connections) then
-    self._state = CLOSED
-    self:emit("close")
+-- Stops listening and closes this server's sockets with 1001 (going away).
+function Server:close()
+  if loop.servers[self.id] ~= self then return end
+  loop.servers[self.id] = nil
+  self._on = {}
+  core.unlisten(self.id)
+  for id, s in pairs(loop.sockets) do
+    if s.server == self then core.close(id, 1001) end
   end
 end
 
-function M:listen(callback)
-  local ok, socket_lib = pcall(require, "socket")
-  if not ok then
-    error("luasocket is required", 2)
+-- path, address, port, protocols, then "name:value" header lines.
+local function request(data)
+  local lines = {}
+  for line in data:gmatch("([^\n]*)\n") do
+    lines[#lines + 1] = line
   end
-  self._socket_lib = socket_lib
-
-  if self._no_server then
-    if callback then callback() end
-    self:emit("listening")
-    return true
+  local req = { path = lines[1], address = lines[2], port = tonumber(lines[3]), protocols = {}, headers = {} }
+  for p in lines[4]:gmatch("[^,]+") do
+    req.protocols[#req.protocols + 1] = p
   end
-
-  local server, err = socket_lib.bind(self._host, self._port, self._backlog)
-  if not server then
-    return nil, "failed to bind: " .. tostring(err)
+  for i = 5, #lines do
+    local name, value = lines[i]:match("^([^:]+):(.*)$")
+    local prev = req.headers[name]
+    req.headers[name] = prev and (prev .. ", " .. value) or value
   end
-
-  server:settimeout(0)
-  self._server = server
-
-  local addr, port = server:getsockname()
-  self._bound_port = port
-  self._bound_address = addr
-
-  if callback then callback() end
-  self:emit("listening")
-  return true
+  return req
 end
 
-function M:address()
-  if self._no_server then
-    error("server is operating in noServer mode", 2)
-  end
-  if not self._server then return nil end
-  return {
-    address = self._bound_address,
-    port = self._bound_port,
-  }
-end
-
-function M:poll(timeout)
-  if self._state ~= RUNNING then return end
-
-  local sockets = {}
-  if self._server then
-    sockets[#sockets + 1] = self._server
-  end
-
-  for sock, ws in pairs(self._socket_map) do
-    if ws.ready_state == "OPEN" or ws.ready_state == "CLOSING" then
-      sockets[#sockets + 1] = sock
-    else
-      self._socket_map[sock] = nil
+-- Decides an upgrade: `accept(req)` returns true, or false and a status.
+function loop.handlers.request(token, data, _, server)
+  local s = loop.servers[server]
+  if not s then return core.reply(token, 503) end
+  local req = request(data)
+  if s.accept then
+    local ok, accepted, status = pcall(s.accept, req)
+    if not ok then
+      core.reply(token, 500)
+      error(accepted, 0)
     end
-  end
-
-  for sock in pairs(self._handshakes) do
-    sockets[#sockets + 1] = sock
-  end
-
-  if #sockets == 0 then return end
-
-  local readable = self._socket_lib.select(sockets, nil, timeout or 0)
-  if not readable then return end
-
-  for _, sock in ipairs(readable) do
-    if sock == self._server then
-      self:_accept_connection()
-    elseif self._handshakes[sock] then
-      self:_read_handshake(sock)
-    else
-      self:_read_client(sock)
-    end
-  end
-
-  -- check close and handshake deadlines
-  local now = os.time()
-  for sock, state in pairs(self._handshakes) do
-    if now >= state.deadline then
-      self:_abort_handshake(sock, 408)
-    end
-  end
-  for ws in pairs(self._connections) do
-    if ws._close_deadline and now >= ws._close_deadline then
-      ws:_destroy_socket()
-    end
-  end
-end
-
-local function contains_protocol(protocols, selected)
-  for _, protocol in ipairs(protocols) do
-    if protocol == selected then
-      return true
-    end
-  end
-  return false
-end
-
-function M:_accept_connection()
-  local client = self._server:accept()
-  if not client then return end
-
-  client:settimeout(0)
-  self._handshakes[client] = {
-    buffer = "",
-    headers = {},
-    header_count = 0,
-    size = 0,
-    deadline = os.time() + self._handshake_timeout,
-  }
-
-  self:_read_handshake(client)
-end
-
-function M:_read_handshake(client)
-  local state = self._handshakes[client]
-  if not state then return end
-
-  while true do
-    local read_size = math.min(HANDSHAKE_CHUNK_SIZE,
-      self._max_header_size - state.size)
-    if read_size <= 0 then
-      self:_abort_handshake(client, 431)
-      return
-    end
-
-    local chunk, err, partial = client:receive(read_size)
-    chunk = chunk or partial
-
-    if chunk and #chunk > 0 then
-      state.size = state.size + #chunk
-      if state.size > self._max_header_size then
-        self:_abort_handshake(client, 431)
-        return
+    if not accepted then
+      status = status or 403
+      if type(status) ~= "number" or status % 1 ~= 0 or status < 400 or status > 599 then
+        core.reply(token, 500)
+        error("accept: status must be an integer from 400 to 599", 0)
       end
-      state.buffer = state.buffer .. chunk
-    end
-
-    while true do
-      local newline = state.buffer:find("\n", 1, true)
-      if not newline then break end
-
-      local line = state.buffer:sub(1, newline - 1)
-      if line:sub(-1) == "\r" then line = line:sub(1, -2) end
-      state.buffer = state.buffer:sub(newline + 1)
-
-      if not state.method then
-        local method, path, major, minor =
-          line:match("^(%u+)%s+(%S+)%s+HTTP/(%d+)%.(%d+)$")
-        if not method then
-          self:_abort_handshake(client, 400)
-          return
-        end
-
-        if tonumber(major) ~= 1 or tonumber(minor) < 1 then
-          self:_abort_handshake(client, 400)
-          return
-        end
-
-        if method ~= "GET" then
-          self:_abort_handshake(client, 405)
-          return
-        end
-
-        local expected_host, expected_port
-        path, expected_host, expected_port = normalize_request_target(path)
-        if not path then
-          self:_abort_handshake(client, 400)
-          return
-        end
-
-        state.method = method
-        state.path = path
-        state.expected_host = expected_host
-        state.expected_port = expected_port
-      elseif line == "" then
-        local leftover = state.buffer
-        self._handshakes[client] = nil
-        self:_handle_upgrade(client, state.method, state.path, state.headers,
-          leftover, state.expected_host, state.expected_port)
-        return
-      else
-        state.header_count = state.header_count + 1
-        if state.header_count > self._max_headers then
-          self:_abort_handshake(client, 431)
-          return
-        end
-
-        if line:find("^[ \t]") then
-          if not state.last_header then
-            self:_abort_handshake(client, 400)
-            return
-          end
-          local value = state.headers[state.last_header] .. " " ..
-            validation.trim_ows(line)
-          if validation.has_invalid_header_value(value) then
-            self:_abort_handshake(client, 400)
-            return
-          end
-          state.headers[state.last_header] = value
-        else
-          local name, value = line:match("^([^:]+):(.*)")
-          if not name or not is_valid_header_name(name) or
-             validation.has_invalid_header_value(value) then
-            self:_abort_handshake(client, 400)
-            return
-          end
-          state.last_header = validation.append_header(state.headers, name, value)
-        end
-      end
-    end
-
-    if err then
-      if err == "timeout" then
-        return
-      end
-      self._handshakes[client] = nil
-      client:close()
-      return
+      return core.reply(token, status)
     end
   end
+  for _, p in ipairs(req.protocols) do
+    if s.protocols[p] then return core.reply(token, 0, p) end
+  end
+  core.reply(token, 0)
 end
 
-function M:_handle_upgrade(socket, method, path, headers, leftover, expected_host, expected_port)
-  headers = normalize_headers(headers)
-  if not headers then
-    self:_abort_handshake(socket, 400)
-    return
-  end
-
-  if method ~= "GET" then
-    self:_abort_handshake(socket, 405)
-    return
-  end
-
-  local parsed_expected_host, parsed_expected_port
-  path, parsed_expected_host, parsed_expected_port = normalize_request_target(path)
-  expected_host = expected_host or parsed_expected_host
-  expected_port = expected_port or parsed_expected_port
-  if not path then
-    self:_abort_handshake(socket, 400)
-    return
-  end
-
-  if not is_valid_host_header(headers["host"]) then
-    self:_abort_handshake(socket, 400)
-    return
-  end
-  if expected_host and not host_matches_authority(headers["host"], expected_host, expected_port) then
-    self:_abort_handshake(socket, 400)
-    return
-  end
-
-  local upgrade = headers["upgrade"]
-  if not validation.header_has_token(upgrade, "websocket") then
-    self:_abort_handshake(socket, 400)
-    return
-  end
-
-  local connection = headers["connection"]
-  if not validation.header_has_token(connection, "upgrade") then
-    self:_abort_handshake(socket, 400)
-    return
-  end
-
-  local key = headers["sec-websocket-key"]
-  if not key or not is_valid_key(key) or #base64.decode(key) ~= 16 then
-    self:_abort_handshake(socket, 400)
-    return
-  end
-
-  local version = tonumber(headers["sec-websocket-version"])
-  if version ~= 13 then
-    self:_abort_handshake(socket, 426, { ["Sec-WebSocket-Version"] = "13" })
-    return
-  end
-
-  if self._path then
-    local req_path = path:match("^([^?]*)") or path
-    if req_path ~= self._path then
-      self:_abort_handshake(socket, 400)
-      return
-    end
-  end
-
-  -- parse subprotocols
-  local protocols = {}
-  local sec_protocol = headers["sec-websocket-protocol"]
-  if sec_protocol then
-    local pok, parsed = pcall(subprotocol_mod.parse, sec_protocol)
-    if not pok then
-      self:_abort_handshake(socket, 400)
-      return
-    end
-    protocols = parsed
-  end
-
-  -- negotiate extensions
-  local exts = {}
-  local ext_header = headers["sec-websocket-extensions"]
-  if self._per_message_deflate and ext_header and deflate_mod.available() then
-    local eok, offers = pcall(extension.parse, ext_header)
-    if eok and offers[deflate_mod.extension_name] then
-      local src_opts = type(self._per_message_deflate) == "table"
-                       and self._per_message_deflate or {}
-      local deflate_opts = {}
-      for k, v in pairs(src_opts) do deflate_opts[k] = v end
-      deflate_opts.is_server = true
-      deflate_opts.max_payload = self._max_payload
-      local deflate = deflate_mod.new(deflate_opts)
-      local aok = pcall(deflate.accept, deflate, offers[deflate_mod.extension_name])
-      if aok then
-        exts[deflate_mod.extension_name] = deflate
-      end
-    end
-  end
-
-  -- verify client
-  if self._verify_client then
-    local req_info = {
-      origin = headers["origin"] or headers["sec-websocket-origin"],
-      secure = false,
-      headers = headers,
-      path = path,
-    }
-    local verified = self._verify_client(req_info)
-    if not verified then
-      self:_abort_handshake(socket, 401)
-      return
-    end
-  end
-
-  self:_complete_upgrade(socket, key, protocols, headers, path, exts, leftover)
+function loop.handlers.connection(id, data, _, server)
+  local s = loop.servers[server]
+  if not s then return core.close(id, 1001) end
+  emitter.emit(s, "connection", Socket.new(id, nil, s), request(data))
 end
 
-function M:_complete_upgrade(socket, key, protocols, request_headers, path, exts, leftover)
-  if self._state ~= RUNNING then
-    self:_abort_handshake(socket, 503)
-    return
-  end
-
-  local digest = base64.encode(sha1_mod.sha1(key .. frame_mod.GUID))
-
-  local response_headers = {
-    "HTTP/1.1 101 Switching Protocols",
-    "Upgrade: websocket",
-    "Connection: Upgrade",
-    "Sec-WebSocket-Accept: " .. digest,
-  }
-
-  local ws = WebSocket._create_from_server(socket, {
-    auto_pong = self._auto_pong,
-    close_timeout = self._close_timeout,
-    max_payload = self._max_payload,
-    skip_utf8_validation = self._skip_utf8_validation,
-  })
-
-  -- subprotocol selection
-  if #protocols > 0 then
-    local selected
-    if self._handle_protocols then
-      selected = self._handle_protocols(protocols, request_headers)
-    else
-      selected = protocols[1]
-    end
-    if selected then
-      if not contains_protocol(protocols, selected) then
-        self:_abort_handshake(socket, 500)
-        return
-      end
-      response_headers[#response_headers + 1] =
-        "Sec-WebSocket-Protocol: " .. selected
-      ws.protocol = selected
-    end
-  end
-
-  -- extension response
-  if exts[deflate_mod.extension_name] then
-    local params = exts[deflate_mod.extension_name].params
-    local value = extension.format({ [deflate_mod.extension_name] = { params } })
-    response_headers[#response_headers + 1] =
-      "Sec-WebSocket-Extensions: " .. value
-  end
-
-  self:emit("headers", response_headers, request_headers)
-
-  response_headers[#response_headers + 1] = ""
-  response_headers[#response_headers + 1] = ""
-  local response = table.concat(response_headers, "\r\n")
-
-  local ok = socket:send(response)
-  if not ok then
-    socket:close()
-    return
-  end
-
-  socket:settimeout(0)
-  ws:_setup_socket(socket, exts)
-  self:_register_connection(ws)
-
-  self:emit("connection", ws, { headers = request_headers, path = path })
-
-  if leftover and #leftover > 0 and ws._receiver then
-    ws._receiver:write(leftover)
-  end
-end
-
-function M:handle_upgrade(socket, method, path, headers, leftover)
-  self:_handle_upgrade(socket, method, path, headers, leftover)
-end
-
-function M:_read_client(sock)
-  local ws = self._socket_map[sock]
-  if ws then
-    ws:poll(0)
-  end
-end
-
-function M:_abort_handshake(socket, code, extra_headers)
-  local status_text = ({
-    [400] = "Bad Request",
-    [401] = "Unauthorized",
-    [405] = "Method Not Allowed",
-    [426] = "Upgrade Required",
-    [408] = "Request Timeout",
-    [431] = "Request Header Fields Too Large",
-    [500] = "Internal Server Error",
-    [503] = "Service Unavailable",
-  })[code] or "Error"
-
-  local headers = {
-    "HTTP/1.1 " .. code .. " " .. status_text,
-    "Connection: close",
-    "Content-Length: 0",
-  }
-
-  if extra_headers then
-    for k, v in pairs(extra_headers) do
-      headers[#headers + 1] = k .. ": " .. v
-    end
-  end
-
-  headers[#headers + 1] = ""
-  headers[#headers + 1] = ""
-
-  self._handshakes[socket] = nil
-  pcall(socket.send, socket, table.concat(headers, "\r\n"))
-  pcall(socket.close, socket)
-end
-
-function M:close(cb)
-  if self._state == CLOSED then
-    if cb then cb() end
-    return
-  end
-
-  if self._state == CLOSING then
-    if cb then self:once("close", cb) end
-    return
-  end
-
-  self._state = CLOSING
-
-  if self._server then
-    pcall(function() self._server:close() end)
-    self._server = nil
-  end
-
-  for sock in pairs(self._handshakes) do
-    self:_abort_handshake(sock, 503)
-  end
-
-  if not next(self._connections) then
-    self._state = CLOSED
-    if cb then cb() end
-    self:emit("close")
-    return
-  end
-
-  if cb then self:once("close", cb) end
-
-  for ws in pairs(self._connections) do
-    ws:close(1001, "server shutting down")
-  end
-end
-
-return M
+return Server

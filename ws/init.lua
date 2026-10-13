@@ -1,37 +1,15 @@
-local WebSocket = require("ws.websocket")
-local Server = require("ws.server")
-local frame = require("ws.frame")
+-- WebSocket client and server for Lua. See README.md for the API.
+local loop = require("ws.loop")
+local server = require("ws.server")
+local socket = require("ws.socket")
+local timer = require("ws.timer")
 
-local M = {}
-
-M.WebSocket = WebSocket
-M.Server = Server
-
-M.CONNECTING = WebSocket.CONNECTING
-M.OPEN = WebSocket.OPEN
-M.CLOSING = WebSocket.CLOSING
-M.CLOSED = WebSocket.CLOSED
-
-M.TEXT = frame.TEXT
-M.BINARY = frame.BINARY
-
-M._VERSION = "0.1.2"
-
-function M.client(address, options)
-  return WebSocket.new(address, options)
-end
-
-function M.server(options)
-  return Server.new(options)
-end
-
-function M.connect(address, options)
-  local ws = WebSocket.new(address, options)
-  local ok, err = ws:connect()
-  if not ok then
-    return nil, err
-  end
-  return ws
-end
-
-return M
+return {
+  _VERSION = "0.2.0",
+  connect = socket.connect,
+  listen = server.listen,
+  run = loop.run,
+  poll = loop.poll,
+  after = timer.after,
+  every = timer.every,
+}

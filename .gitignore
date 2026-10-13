@@ -1,2 +1,8 @@
 *.rock
-/lua_modules/
+__pycache__/
+/target/
+/.build/
+/bundles/
+/dist/
+/ws/core.so
+/ws/core.dll

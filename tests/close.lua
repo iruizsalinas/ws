@@ -1,0 +1,91 @@
+local H = require("tests.helper")
+local ws = require("ws")
+
+H.test("client close carries code and reason", function()
+  local server = H.server()
+  local server_close
+  server:on("connection", function(c)
+    c:on("close", function(code, reason)
+      server_close = { code, reason }
+      server:close()
+    end)
+  end)
+  local c = ws.connect(H.url(server))
+  local client_close
+  c:on("open", function()
+    c:close(4000, "bye")
+    H.eq(c.state, "closing", "state after close()")
+  end)
+  c:on("close", function(code, reason) client_close = { code, reason } end)
+  H.run()
+  H.eq(server_close[1], 4000, "server code")
+  H.eq(server_close[2], "bye", "server reason")
+  H.eq(client_close[1], 4000, "echoed code")
+  H.eq(client_close[2], "", "echoed reason")
+end)
+
+H.test("default close is 1000", function()
+  local server = H.server()
+  local code
+  server:on("connection", function(c)
+    c:on("close", function(c2) code = c2; server:close() end)
+  end)
+  local c = ws.connect(H.url(server))
+  c:on("open", function() c:close() end)
+  H.run()
+  H.eq(code, 1000)
+end)
+
+H.test("server close sends 1001 to its sockets", function()
+  local server = H.server()
+  server:on("connection", function() server:close() end)
+  local c = ws.connect(H.url(server))
+  local code
+  c:on("close", function(c2) code = c2 end)
+  H.run()
+  H.eq(code, 1001)
+end)
+
+H.test("terminate is abnormal on both ends", function()
+  local server = H.server()
+  local server_code
+  server:on("connection", function(c)
+    c:on("close", function(code) server_code = code; server:close() end)
+  end)
+  local c = ws.connect(H.url(server))
+  local client_code
+  c:on("open", function() c:terminate() end)
+  c:on("close", function(code) client_code = code end)
+  H.run()
+  H.eq(client_code, 1006, "client")
+  H.eq(server_code, 1006, "server")
+end)
+
+H.test("closing while connecting aborts", function()
+  local server = H.server()
+  server:on("connection", function(c) c:close() end)
+  local c = ws.connect(H.url(server))
+  local events = {}
+  c:on("error", function(err) events[#events + 1] = err end)
+  c:on("close", function(code) events[#events + 1] = code; server:close() end)
+  c:close()
+  H.run()
+  H.eq(events[1], "connection closed before it was established")
+  H.eq(events[2], 1006)
+end)
+
+H.test("closed sockets refuse to send", function()
+  local server = H.echo()
+  local c = ws.connect(H.url(server))
+  local early = { c:send("x") }
+  local late
+  c:on("open", function()
+    c:close()
+    late = { c:send("x") }
+  end)
+  H.run()
+  H.eq(early[1], nil, "early result")
+  H.eq(early[2], "not open yet", "early error")
+  H.eq(late[2], "closed", "late error")
+  H.eq(c.buffered, 0, "buffered after close")
+end)

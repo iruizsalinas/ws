@@ -1,0 +1,10 @@
+* text=auto
+*.c text eol=lf
+*.h text eol=lf
+*.lua text eol=lf
+*.pem text eol=lf
+*.py text eol=lf
+*.rockspec text eol=lf
+*.rs text eol=lf
+*.toml text eol=lf
+*.yml text eol=lf
