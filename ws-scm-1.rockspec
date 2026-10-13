@@ -6,10 +6,9 @@ source = {
 }
 description = {
   summary = "A WebSocket client and server library for Lua",
-  detailed = "RFC 6455 WebSocket client and server with TLS, running on a Rust core. Prebuilt for common platforms.",
   homepage = "https://github.com/iruizsalinas/ws",
   license = "MIT",
-  labels = { "websocket", "networking", "tls" },
+  labels = { "websocket", "rfc6455", "networking", "tls" },
 }
 dependencies = { "lua >= 5.1, < 5.6" }
 build = {

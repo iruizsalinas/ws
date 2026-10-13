@@ -122,7 +122,3 @@ ws.run()
 | `limits.message` | `1048576` | Maximum message size in bytes (1 MiB) |
 | `limits.buffer` | `16777216` | Unsent bytes allowed before `send` returns `nil, "send buffer is full"` (16 MiB); `drain` fires when there is room again |
 | `limits.connections` | `nil` | Maximum concurrent connections; extra ones are dropped (unlimited by default) |
-
-## License
-
-MIT
