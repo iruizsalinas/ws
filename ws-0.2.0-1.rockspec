@@ -2,7 +2,7 @@ rockspec_format = "3.0"
 package = "ws"
 version = "0.2.0-1"
 source = {
-  url = "https://github.com/iruizsalinas/ws/archive/refs/tags/0.2.0.tar.gz",
+  url = "https://github.com/iruizsalinas/ws/archive/refs/tags/v0.2.0.tar.gz",
   dir = "ws-0.2.0",
 }
 description = {

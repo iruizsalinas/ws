@@ -37,8 +37,8 @@ jobs:
           version=${version%-1.rockspec}
           echo "SPEC=$spec" >> "$GITHUB_ENV"
           echo "VERSION=$version" >> "$GITHUB_ENV"
-          git tag "$version" "$GITHUB_SHA"
-          git push origin "refs/tags/$version"
+          git tag "v$version" "$GITHUB_SHA"
+          git push origin "refs/tags/v$version"
       - name: Publish to LuaRocks
         env:
           LUAROCKS_API_KEY: ${{ secrets.LUAROCKS_API_KEY }}

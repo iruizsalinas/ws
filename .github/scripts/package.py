@@ -51,7 +51,7 @@ def package(partial):
     for name in FILES + [spec.name]:
         shutil.copyfile(ROOT / name, stage / name)
     # The archive name and folder match the rockspec's source url and dir.
-    archive = out / f"{version}.tar.gz"
+    archive = out / f"v{version}.tar.gz"
     with tarfile.open(archive, "w:gz") as tf:
         tf.add(stage, arcname=stage.name)
     shutil.rmtree(stage.parent)
