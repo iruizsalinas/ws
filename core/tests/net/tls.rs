@@ -49,7 +49,7 @@ fn tls() {
             e => panic!("unexpected {}", describe(&e)),
         }
     }
-    peer.close(1000, "done");
+    peer.close(1000, "done").unwrap();
     let mut codes = Vec::new();
     while codes.len() < 2 {
         match next(&hub, &accept) {

@@ -4,6 +4,23 @@ use super::common::*;
 use ws_core::*;
 
 #[test]
+fn rust_api_rejects_invalid_outbound_frames() {
+    let hub = Hub::default();
+    let server = listen(&hub);
+    let (client, peer) = pair(&hub, &server, ClientOptions::default());
+    assert!(client.send(&[0xff], false).is_err());
+    assert!(client.ping(&[0; 126]).is_err());
+    for (code, reason) in [(1005, String::new()), (1000, "x".repeat(124))] {
+        assert!(client.close(code, &reason).is_err());
+        assert_eq!(client.state(), State::Open, "invalid close must not change state");
+    }
+    client.send(&[0xff], true).unwrap();
+    assert!(matches!(next(&hub, &accept), Event::Message { binary: true, data, .. } if data == [0xff]));
+    client.terminate();
+    peer.terminate();
+}
+
+#[test]
 fn echo_and_close() {
     let hub = Hub::default();
     let server = listen(&hub);
@@ -22,7 +39,7 @@ fn echo_and_close() {
     }
     assert_eq!(got, [("h\u{e9}llo".as_bytes().to_vec(), false), (vec![0, 1, 2, 255], true), (big, true)]);
 
-    client.close(4000, "bye");
+    client.close(4000, "bye").unwrap();
     assert_eq!(client.send(b"late", false), Err("closed"));
     let mut closed = Vec::new();
     while closed.len() < 2 {

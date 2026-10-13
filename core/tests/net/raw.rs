@@ -142,7 +142,7 @@ fn ping_is_answered_while_waiting_for_peer_close() {
     raw.0.write_all(UPGRADE.as_bytes()).unwrap();
     let Event::Connection { conn, .. } = next(&hub, &accept) else { panic!("expected connection") };
     assert!(raw.request("").starts_with("HTTP/1.1 101 "));
-    conn.close(1000, "");
+    conn.close(1000, "").unwrap();
     assert_eq!(raw.frame().0, CLOSE);
     raw.send(PING, b"still here");
     assert_eq!(raw.frame(), (PONG, b"still here".to_vec()));
@@ -166,4 +166,23 @@ fn peer_half_close_does_not_discard_close_reply() {
     assert_eq!(raw.frame(), (frame::BINARY, data));
     assert_eq!(raw.frame(), (CLOSE, frame::close_payload(1000, "")));
     raw.eof();
+}
+
+#[test]
+fn full_inbox_does_not_block_close_reply() {
+    let hub = Hub::default();
+    let server = listen(&hub);
+    let mut raw = Raw::connect(&server);
+    raw.0.write_all(UPGRADE.as_bytes()).unwrap();
+    let Event::Connection { conn, .. } = next(&hub, &accept) else { panic!("expected connection") };
+    assert!(raw.request("").starts_with("HTTP/1.1 101 "));
+    raw.send(frame::BINARY, &vec![0; MAX_PAYLOAD]);
+    assert!(matches!(next(&hub, &accept), Event::Message { .. }));
+    // Intentionally do not acknowledge the message: the inbox remains full.
+    conn.close(1000, "").unwrap();
+    assert_eq!(raw.frame().0, CLOSE);
+    raw.send(CLOSE, &frame::close_payload(1000, ""));
+    raw.eof();
+    drop(raw);
+    assert!(matches!(next(&hub, &accept), Event::Close { code: 1000, .. }));
 }

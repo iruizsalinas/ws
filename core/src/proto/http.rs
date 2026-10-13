@@ -44,6 +44,9 @@ pub fn check_header(name: &str, value: &str) -> Result<(), String> {
 
 /// Splits a complete head into its start line and headers.
 pub(crate) fn parse(head: &[u8]) -> Option<(&str, Headers)> {
+    if head.len() > MAX_HEAD {
+        return None;
+    }
     let text = std::str::from_utf8(head).ok()?.strip_suffix("\r\n\r\n")?;
     let mut lines = text.split("\r\n");
     let start = lines.next()?;

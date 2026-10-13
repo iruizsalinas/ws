@@ -41,8 +41,10 @@ pub extern "C" fn ws_close(id: u64, code: c_int, reason: WsStr) -> c_int {
         return fail(FATAL, "close reason must be at most 123 bytes");
     }
     let conn = registry().conns.get(&id).cloned();
-    if let Some(c) = conn {
-        c.close(code, reason);
+    if let Some(c) = conn
+        && let Err(e) = c.close(code, reason)
+    {
+        return fail(FATAL, e);
     }
     OK
 }

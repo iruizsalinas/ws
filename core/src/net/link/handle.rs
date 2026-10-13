@@ -87,6 +87,9 @@ impl Link {
     }
 
     fn deliver(&self, bytes: usize, event: Event) {
+        if self.inbox.load(Relaxed) >= super::read::INBOX_LIMIT && self.state() != super::State::Open {
+            return;
+        }
         self.inbox.fetch_add(bytes + EVENT_COST, Relaxed);
         self.emit(event);
     }

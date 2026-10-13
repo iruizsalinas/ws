@@ -29,19 +29,32 @@ impl Conn {
         self.0.buffered()
     }
 
-    /// Text must be valid UTF-8; the caller checks.
+    /// Sends text or binary data; rejects text that is not valid UTF-8.
     pub fn send(&self, data: &[u8], binary: bool) -> Result<(), &'static str> {
+        if !binary && std::str::from_utf8(data).is_err() {
+            return Err("text must be valid UTF-8; use send(data, true) for binary");
+        }
         self.0.send(if binary { frame::BINARY } else { frame::TEXT }, data)
     }
 
-    /// At most 125 bytes; the caller checks.
+    /// Sends a ping, rejecting payloads longer than 125 bytes.
     pub fn ping(&self, data: &[u8]) -> Result<(), &'static str> {
+        if data.len() > 125 {
+            return Err("ping data must be at most 125 bytes");
+        }
         self.0.send(frame::PING, data)
     }
 
-    /// `code` must pass `frame::valid_close_code`; `reason` is at most 123 bytes.
-    pub fn close(&self, code: u16, reason: &str) {
-        self.0.close(code, reason)
+    /// Starts closing, rejecting invalid codes or reasons longer than 123 bytes.
+    pub fn close(&self, code: u16, reason: &str) -> Result<(), &'static str> {
+        if !frame::valid_close_code(code) {
+            return Err("invalid close code");
+        }
+        if reason.len() > 123 {
+            return Err("close reason must be at most 123 bytes");
+        }
+        self.0.close(code, reason);
+        Ok(())
     }
 
     pub fn terminate(&self) {

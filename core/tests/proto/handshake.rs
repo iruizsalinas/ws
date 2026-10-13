@@ -104,3 +104,22 @@ fn user_headers() {
     assert!(check_header("X", "a\r\nb").is_err());
     assert!(check_header("Bad Name", "x").is_err());
 }
+
+#[test]
+fn switching_response_status_line() {
+    let valid = String::from_utf8(ws_core::proto::handshake::switching(KEY, None)).unwrap();
+    // The reason phrase may be empty, but its preceding space is required (RFC 9112 section 4).
+    assert!(response(valid.replace("101 Switching Protocols", "101").as_bytes(), KEY, &[]).is_err());
+    assert!(response(valid.replace("Switching Protocols", "").as_bytes(), KEY, &[]).is_ok());
+    // A 1xx response has no body, so framing headers are ignored (RFC 9112 section 6.3).
+    for framing in ["Content-Length: 0", "Transfer-Encoding: chunked"] {
+        let head = valid.replace("\r\n\r\n", &format!("\r\n{framing}\r\n\r\n"));
+        assert!(response(head.as_bytes(), KEY, &[]).is_ok(), "rejected {framing}");
+    }
+}
+
+#[test]
+fn direct_handshake_parsing_enforces_byte_limit() {
+    let huge = req(&format!("X-Large: {}\r\n", "x".repeat(16 * 1024)));
+    assert!(request(huge.as_bytes()).is_err());
+}

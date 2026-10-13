@@ -70,3 +70,12 @@ fn tls_plaintext_is_drained_between_records() {
         assert_eq!(plain, expected);
     }
 }
+
+#[test]
+fn closing_connections_do_not_wait_for_application_consumption() {
+    let (events, _rx) = channel();
+    let link = Link::new(1, true, 1024, events);
+    link.inbox.store(INBOX_LIMIT, Relaxed);
+    lock(&link.flags).state = State::Closing;
+    assert!(link.wait_inbox(), "backpressure must not prevent reading the peer's close reply");
+}

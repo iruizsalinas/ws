@@ -20,6 +20,8 @@ use write::Queue;
 const CLOSE_TIMEOUT: Duration = Duration::from_secs(5);
 /// Accounting cost of an event beyond its payload.
 const EVENT_COST: usize = 64;
+/// Stop accepting application frames while the writer is this far behind.
+const OUTBOX_LIMIT: usize = 16 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum State {
@@ -100,6 +102,12 @@ impl Link {
         let f = lock(&self.flags);
         if f.state != State::Open || f.sent_close {
             return Err(if f.state == State::Connecting { "not open yet" } else { "closed" });
+        }
+        // Checked under flags, which serializes application sends. A single
+        // large frame is allowed to cross the threshold; subsequent sends
+        // must wait for the writer, including its currently in-flight batch.
+        if self.buffered.load(Relaxed) >= OUTBOX_LIMIT {
+            return Err("send buffer is full");
         }
         self.push(self.frame(op, payload));
         Ok(())

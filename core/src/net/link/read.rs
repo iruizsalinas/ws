@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 /// Undelivered inbound bytes before the reader waits for the application.
-const INBOX_LIMIT: usize = 1 << 20;
+pub(super) const INBOX_LIMIT: usize = 1 << 20;
 
 impl Link {
     /// Switches to the open state and runs the connection to completion.
@@ -100,6 +100,11 @@ impl Link {
 
     /// Backpressure: waits (one tick at most) while the application lags.
     fn wait_inbox(&self) -> bool {
+        // Keep reading the closing handshake even if the application stopped
+        // consuming events. Delivery stays bounded while closing.
+        if self.state() != State::Open {
+            return true;
+        }
         if self.inbox.load(Relaxed) < INBOX_LIMIT {
             return true;
         }

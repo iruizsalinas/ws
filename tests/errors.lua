@@ -26,6 +26,10 @@ H.test("socket misuse raises", function()
     H.raises(function() c:send("\255") end, "text must be valid UTF-8")
     H.raises(function() c:ping(string.rep("x", 126)) end, "at most 125 bytes")
     H.raises(function() c:close(1005) end, "invalid close code")
+    for _, code in ipairs({ 1000.5, "1000", math.huge, 0 / 0 }) do
+      H.raises(function() c:close(code) end, "invalid close code")
+      H.eq(c.state, "open", "invalid close must not change state")
+    end
     H.raises(function() c:close(1000, string.rep("x", 124)) end, "at most 123 bytes")
     c:close(1000)
   end)

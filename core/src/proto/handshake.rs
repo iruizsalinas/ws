@@ -130,8 +130,8 @@ pub fn client_request(url: &Url, key: &str, protocols: &[String], headers: &Head
 pub fn response(head: &[u8], key: &str, protocols: &[String]) -> Result<Option<String>, String> {
     let (start, headers) = parse(head).ok_or("invalid handshake response")?;
     let mut parts = start.splitn(3, ' ');
-    let status = match (parts.next(), parts.next()) {
-        (Some("HTTP/1.1"), Some(s)) if s.len() == 3 && s.bytes().all(|b| b.is_ascii_digit()) => s,
+    let status = match (parts.next(), parts.next(), parts.next()) {
+        (Some("HTTP/1.1"), Some(s), Some(_)) if s.len() == 3 && s.bytes().all(|b| b.is_ascii_digit()) => s,
         _ => return Err("invalid handshake response".into()),
     };
     if status != "101" {

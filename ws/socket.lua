@@ -65,6 +65,9 @@ function Socket:ping(data)
 end
 
 function Socket:close(code, reason)
+  if code ~= nil and (type(code) ~= "number" or code % 1 ~= 0 or code < 0 or code > 65535) then
+    error("invalid close code", 2)
+  end
   if reason ~= nil and type(reason) ~= "string" then
     error("reason must be a string", 2)
   end

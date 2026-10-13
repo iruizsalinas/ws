@@ -26,7 +26,7 @@ fn terminate_and_abort() {
     let c = hub
         .connect(&format!("ws://127.0.0.1:{}", blackhole.local_addr().unwrap().port()), ClientOptions::default())
         .unwrap();
-    c.close(1000, "");
+    c.close(1000, "").unwrap();
     assert_eq!(describe(&next(&hub, &accept)), format!("error {} connection closed before it was established", c.id()));
     assert_eq!(describe(&next(&hub, &accept)), format!("close {} 1006 ", c.id()));
 }
