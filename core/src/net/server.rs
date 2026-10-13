@@ -11,7 +11,7 @@ use std::sync::mpsc::{Receiver, channel};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-/// Connections still handshaking; more are dropped on accept.
+/// Handshakes and undrained upgrade requests; more are dropped on accept.
 const MAX_PENDING: usize = 256;
 
 pub struct Options {
@@ -54,7 +54,7 @@ pub(super) struct Shared {
     pub events: Events,
     pub tls: Option<Arc<ServerConfig>>,
     pub config: Config,
-    pub pending: AtomicUsize,
+    pending: Arc<AtomicUsize>,
     pub stop: Arc<AtomicBool>,
     connections: Arc<AtomicUsize>,
     max_connections: usize,
@@ -109,7 +109,7 @@ pub(crate) fn listen(events: Events, id: Id, opts: Options) -> std::io::Result<S
         events,
         tls: opts.tls,
         config: Config { message: opts.max_message, buffer: opts.max_buffer, heartbeat: opts.heartbeat },
-        pending: AtomicUsize::new(0),
+        pending: Arc::default(),
         stop: stop.clone(),
         connections: Arc::default(),
         max_connections: opts.max_connections,
@@ -136,14 +136,10 @@ fn accept(listener: TcpListener, shared: Arc<Shared>, stop: Arc<AtomicBool>) {
         let Some(permit) = Permit::acquire(&shared.connections, shared.max_connections) else {
             continue;
         };
-        if shared.pending.fetch_add(1, Relaxed) >= MAX_PENDING {
-            shared.pending.fetch_sub(1, Relaxed);
+        let Some(pending) = Permit::acquire(&shared.pending, MAX_PENDING) else {
             continue;
-        }
+        };
         let s = shared.clone();
-        let spawned = std::thread::Builder::new().name("ws-conn".into()).spawn(move || serve(&s, tcp, permit));
-        if spawned.is_err() {
-            shared.pending.fetch_sub(1, Relaxed);
-        }
+        let _ = std::thread::Builder::new().name("ws-conn".into()).spawn(move || serve(&s, tcp, permit, pending));
     }
 }

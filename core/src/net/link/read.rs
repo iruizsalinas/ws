@@ -7,7 +7,7 @@ use crate::proto::reader::Reader;
 use crate::{Event, TICK, lock};
 use rustls::Connection;
 use std::io::{ErrorKind, Read};
-use std::net::TcpStream;
+use std::net::{Shutdown, TcpStream};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -37,6 +37,8 @@ impl Link {
         let sent = {
             let mut f = lock(&self.flags);
             if f.state != State::Connecting {
+                // Cancellation may have happened before `io` was installed.
+                let _ = tcp.shutdown(Shutdown::Both);
                 return;
             }
             f.state = State::Open;

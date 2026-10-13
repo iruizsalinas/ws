@@ -82,3 +82,20 @@ fn closing_connections_do_not_wait_for_application_consumption() {
     lock(&link.flags).state = State::Closing;
     assert!(link.wait_inbox(), "backpressure must not prevent reading the peer's close reply");
 }
+
+#[test]
+fn cancelled_start_closes_the_transport_even_when_the_handle_is_retained() {
+    use std::io::Read;
+    use std::net::{TcpListener, TcpStream};
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let mut peer = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+    peer.set_read_timeout(Some(Duration::from_millis(200))).unwrap();
+    let (tcp, _) = listener.accept().unwrap();
+    let (events, _rx) = channel();
+    let link = Link::new(1, false, Config::test(1024), events.into());
+    link.terminate();
+    link.start(tcp, None, vec![], None, Event::Open { id: 1 });
+    assert_eq!(peer.read(&mut [0]).expect("cancelled connection retained a live socket"), 0);
+    assert_eq!(link.state(), State::Closed);
+}

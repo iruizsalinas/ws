@@ -29,6 +29,7 @@ impl Drop for Permit {
 pub(crate) struct Queued {
     pub event: Event,
     _permit: Option<Arc<Permit>>,
+    _pending: Option<Arc<Permit>>,
 }
 
 #[derive(Clone)]
@@ -59,6 +60,11 @@ impl Events {
     }
 
     pub fn send(&self, event: Event) -> Result<(), ()> {
+        self.send_pending(event, None)
+    }
+
+    /// A request retains its handshake slot even if its worker times out.
+    pub fn send_pending(&self, event: Event, pending: Option<Arc<Permit>>) -> Result<(), ()> {
         let mut permit = lock(&self.permit);
         // A retained closed Conn must not retain capacity forever. The final
         // event and the network worker still own their slots until drained.
@@ -66,7 +72,7 @@ impl Events {
         if self.closed() {
             return Err(());
         }
-        self.tx.send(Queued { event, _permit: slot }).map_err(|_| ())
+        self.tx.send(Queued { event, _permit: slot, _pending: pending }).map_err(|_| ())
     }
 }
 

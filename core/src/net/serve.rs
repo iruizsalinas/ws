@@ -10,32 +10,14 @@ use rustls::{Connection, ServerConnection};
 use std::io::{ErrorKind, Read};
 use std::net::{Shutdown, TcpStream};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
+use std::sync::atomic::Ordering::Relaxed;
 use std::sync::mpsc::sync_channel;
 use std::time::{Duration, Instant};
 
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Decrements the pending count once the handshake is over.
-struct Pending<'a>(Option<&'a AtomicUsize>);
-
-impl Pending<'_> {
-    fn done(&mut self) {
-        if let Some(p) = self.0.take() {
-            p.fetch_sub(1, Relaxed);
-        }
-    }
-}
-
-impl Drop for Pending<'_> {
-    fn drop(&mut self) {
-        self.done();
-    }
-}
-
-pub(super) fn serve(shared: &Shared, tcp: TcpStream, permit: Arc<Permit>) {
+pub(super) fn serve(shared: &Shared, tcp: TcpStream, permit: Arc<Permit>, pending: Arc<Permit>) {
     let events = shared.events.admitted(permit.clone());
-    let mut pending = Pending(Some(&shared.pending));
     let Ok(addr) = tcp.peer_addr() else { return };
     let deadline = Instant::now() + HANDSHAKE_TIMEOUT;
     let alive = || !shared.stop.load(Relaxed);
@@ -62,7 +44,10 @@ pub(super) fn serve(shared: &Shared, tcp: TcpStream, permit: Arc<Permit>) {
     };
     let req = Request { path: parsed.target, headers: parsed.headers, protocols: parsed.protocols, addr };
     let (tx, rx) = sync_channel(1);
-    if events.send(Event::Request { server: shared.id, req: req.clone(), reply: tx }).is_err() {
+    if events
+        .send_pending(Event::Request { server: shared.id, req: req.clone(), reply: tx }, Some(pending.clone()))
+        .is_err()
+    {
         return;
     }
     let left = deadline.saturating_duration_since(Instant::now());
@@ -80,7 +65,7 @@ pub(super) fn serve(shared: &Shared, tcp: TcpStream, permit: Arc<Permit>) {
     if s.write_all(&handshake::switching(&parsed.key, protocol.as_deref())).is_err() {
         return;
     }
-    pending.done();
+    drop(pending);
     let link = Link::new(crate::next_id(), true, shared.config, events);
     let open = Event::Connection { server: shared.id, conn: Conn(link.clone()), req };
     link.start(s.tcp, s.tls, rest, protocol, open);

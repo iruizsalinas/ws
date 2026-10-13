@@ -51,6 +51,43 @@ fn expired_requests_keep_capacity_until_their_events_are_drained() {
 }
 
 #[test]
+fn expired_requests_retain_pending_slots_even_with_unlimited_connections() {
+    let connections = Arc::new(AtomicUsize::new(0));
+    let pending = Arc::new(AtomicUsize::new(0));
+    let (tx, rx) = channel();
+    let events = Events::from(tx);
+    let connection = Permit::acquire(&connections, usize::MAX).unwrap();
+    let worker = events.admitted(connection.clone());
+    let slot = Permit::acquire(&pending, 1).unwrap();
+    let (reply, decision) = sync_channel(1);
+    worker
+        .send_pending(
+            Event::Request {
+                server: 1,
+                req: crate::Request {
+                    path: "/".into(),
+                    headers: vec![],
+                    protocols: vec![],
+                    addr: "127.0.0.1:1".parse().unwrap(),
+                },
+                reply,
+            },
+            Some(slot.clone()),
+        )
+        .unwrap();
+    // Simulate a timeout without polling the application's event queue.
+    drop(decision);
+    drop(worker);
+    drop(connection);
+    drop(slot);
+    assert!(Permit::acquire(&connections, usize::MAX).is_some());
+    assert!(Permit::acquire(&pending, 1).is_none(), "expired request lost its handshake slot");
+    drop(rx.recv().unwrap());
+    assert!(Permit::acquire(&pending, 1).is_some(), "draining the request must restore capacity");
+    assert_eq!(connections.load(Relaxed), 0);
+}
+
+#[test]
 fn close_releases_capacity_after_worker_and_queued_events_finish() {
     let count = Arc::new(AtomicUsize::new(0));
     let (tx, rx) = channel();
