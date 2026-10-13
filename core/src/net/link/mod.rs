@@ -134,11 +134,15 @@ impl Link {
         self.finish(1006, String::new());
     }
 
-    /// Sends an event unless the close event already went out.
+    /// Sends an event unless the close event already went out. Once the hub
+    /// is gone nothing can read or close this connection, so it ends.
     fn emit(&self, event: Event) {
-        let f = lock(&self.flags);
-        if f.state != State::Closed {
-            let _ = self.events.send(event);
+        let sent = {
+            let f = lock(&self.flags);
+            f.state == State::Closed || self.events.send(event).is_ok()
+        };
+        if !sent || self.events.closed() {
+            self.terminate();
         }
     }
 }

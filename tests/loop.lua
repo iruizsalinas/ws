@@ -8,11 +8,12 @@ for _, name in ipairs({ "ws.core", "ws.loop", "ws.timer" }) do
 end
 package.loaded["ws.core"] = {
   hub = function() return 1 end,
+  shutdown = function() end,
   now = function() return 0 end,
   wait = function()
     if taken < queued then
       taken = taken + 1
-      return "message", taken
+      return 2, taken
     end
   end,
 }

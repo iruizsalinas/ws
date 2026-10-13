@@ -14,7 +14,19 @@ local loop = {
   sockets = {}, -- id -> socket, until its close event
   servers = {}, -- id -> server, until closed
   handlers = {}, -- event kind -> function(id, data, code, server)
+  -- Event kinds as ws.core numbers them.
+  kinds = { "open", "message", "ping", "pong", "error", "close", "request", "connection", "drain" },
 }
+
+-- When this Lua state closes, its sockets and servers end with it instead
+-- of running on in the host process.
+local function shutdown() core.shutdown(loop.hub) end
+if newproxy then -- Lua 5.1 and LuaJIT finalize only userdata
+  loop.guard = newproxy(true)
+  getmetatable(loop.guard).__gc = shutdown
+else
+  loop.guard = setmetatable({}, { __gc = shutdown })
+end
 
 local running = false
 -- Events handled per wait, so timers are never starved.
@@ -39,7 +51,7 @@ local function step(limit)
     if not kind then
       break
     end
-    loop.handlers[kind](id, data, code, server)
+    loop.handlers[loop.kinds[kind]](id, data, code, server)
   end
   timer.fire()
   return active()

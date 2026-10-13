@@ -34,13 +34,16 @@ impl Link {
             Mutex::new(t)
         });
         let _ = self.io.set(Io { tcp: shared, tls });
-        {
+        let sent = {
             let mut f = lock(&self.flags);
             if f.state != State::Connecting {
                 return;
             }
             f.state = State::Open;
-            let _ = self.events.send(open);
+            self.events.send(open).is_ok()
+        };
+        if !sent || self.events.closed() {
+            return self.terminate();
         }
         let link = self.clone();
         if std::thread::Builder::new().name("ws-write".into()).spawn(move || link.write_loop(writer)).is_err() {

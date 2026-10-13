@@ -1,8 +1,8 @@
 //! Shared ABI plumbing: strings, status codes and the handle registry.
 //!
 //! Every object crosses the boundary as an integer id, so C never holds a
-//! Rust pointer. Returned strings point into a thread-local buffer that
-//! stays valid until the next call on the same thread; C copies them at once.
+//! Rust pointer. Returned strings belong to C, which releases them with
+//! `ws_free`: copying one into Lua can run finalizers that call back in.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -47,36 +47,34 @@ impl WsStr {
 }
 
 thread_local! {
-    static OUT: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
     static ERROR: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
 }
 
-fn hold(cell: &'static std::thread::LocalKey<RefCell<Vec<u8>>>, bytes: Vec<u8>) -> WsStr {
-    cell.with(|c| {
-        *c.borrow_mut() = bytes;
-        let b = c.borrow();
-        WsStr { ptr: b.as_ptr(), len: b.len() }
-    })
-}
-
-/// Returns `bytes` to C, valid until the next call on this thread.
+/// Hands `bytes` to C, which releases them with `ws_free`.
 pub fn out(bytes: Vec<u8>) -> WsStr {
-    hold(&OUT, bytes)
+    let len = bytes.len();
+    WsStr { ptr: Box::into_raw(bytes.into_boxed_slice()).cast::<u8>(), len }
 }
 
 /// Records `message` for `ws_error` and returns `status`.
 pub fn fail(status: c_int, message: &str) -> c_int {
-    hold(&ERROR, message.as_bytes().to_vec());
+    ERROR.with(|c| *c.borrow_mut() = message.as_bytes().to_vec());
     status
 }
 
 /// The message of the last failed call on this thread.
 #[unsafe(no_mangle)]
 pub extern "C" fn ws_error() -> WsStr {
-    ERROR.with(|c| {
-        let b = c.borrow();
-        WsStr { ptr: b.as_ptr(), len: b.len() }
-    })
+    out(ERROR.with(|c| std::mem::take(&mut *c.borrow_mut())))
+}
+
+/// Releases a string this library returned; null strings are ignored.
+#[unsafe(no_mangle)]
+pub extern "C" fn ws_free(s: WsStr) {
+    if !s.ptr.is_null() {
+        // SAFETY: C passes each string from `out` back exactly once.
+        drop(unsafe { Box::from_raw(std::ptr::slice_from_raw_parts_mut(s.ptr.cast_mut(), s.len)) });
+    }
 }
 
 #[derive(Default)]
@@ -84,8 +82,10 @@ pub struct Registry {
     pub hubs: HashMap<u64, Arc<Hub>>,
     pub conns: HashMap<Id, Conn>,
     pub servers: HashMap<Id, Server>,
-    /// Pending upgrade decisions, keyed by token.
-    pub replies: HashMap<u64, SyncSender<Reply>>,
+    /// The hub of each connection and server, for `ws_shutdown`.
+    pub owners: HashMap<Id, u64>,
+    /// Pending upgrade decisions and their hubs, keyed by token.
+    pub replies: HashMap<u64, (u64, SyncSender<Reply>)>,
     pub next: u64,
 }
 

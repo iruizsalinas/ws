@@ -4,7 +4,7 @@ use crate::ffi::{FATAL, OK, WsStr, fail, registry};
 use std::ffi::c_int;
 use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
-use ws_core::{ClientOptions, Hub, tls};
+use ws_core::{ClientOptions, Hub, Id, tls};
 
 #[unsafe(no_mangle)]
 pub extern "C" fn ws_hub() -> u64 {
@@ -12,6 +12,29 @@ pub extern "C" fn ws_hub() -> u64 {
     let id = reg.token();
     reg.hubs.insert(id, Arc::new(Hub::default()));
     id
+}
+
+/// Forgets a hub when its Lua state closes: its servers stop, its
+/// connections end and its pending upgrades are refused.
+#[unsafe(no_mangle)]
+pub extern "C" fn ws_shutdown(hub_id: u64) {
+    let (hub, conns, servers) = {
+        let mut reg = registry();
+        let ids: Vec<Id> = reg.owners.iter().filter(|&(_, &h)| h == hub_id).map(|(&id, _)| id).collect();
+        let (mut conns, mut servers) = (Vec::new(), Vec::new());
+        for id in ids {
+            reg.owners.remove(&id);
+            conns.extend(reg.conns.remove(&id));
+            servers.extend(reg.servers.remove(&id));
+        }
+        reg.replies.retain(|_, (h, _)| *h != hub_id);
+        (reg.hubs.remove(&hub_id), conns, servers)
+    };
+    drop(servers);
+    for conn in conns {
+        conn.terminate();
+    }
+    drop(hub);
 }
 
 /// Monotonic seconds, for timers.
@@ -81,7 +104,9 @@ pub extern "C" fn ws_connect(
         opts.heartbeat = heartbeat_from(heartbeat, opts.heartbeat);
         let conn = hub.connect(url, opts).map_err(|e| fail(FATAL, &e))?;
         let conn_id = conn.id();
-        registry().conns.insert(conn_id, conn);
+        let mut reg = registry();
+        reg.conns.insert(conn_id, conn);
+        reg.owners.insert(conn_id, hub_id);
         Ok(conn_id)
     };
     run().map_or_else(

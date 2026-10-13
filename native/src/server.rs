@@ -41,7 +41,9 @@ pub extern "C" fn ws_listen(
         };
         let server = hub.listen(opts).map_err(|e| fail(SOFT, &e.to_string()))?;
         let server_id = server.id();
-        registry().servers.insert(server_id, server);
+        let mut reg = registry();
+        reg.servers.insert(server_id, server);
+        reg.owners.insert(server_id, hub_id);
         Ok(server_id)
     };
     run().map_or_else(
@@ -62,7 +64,11 @@ pub extern "C" fn ws_port(server: u64) -> u16 {
 /// Stops listening; live connections are unaffected.
 #[unsafe(no_mangle)]
 pub extern "C" fn ws_unlisten(server: u64) {
-    let server = registry().servers.remove(&server);
+    let server = {
+        let mut reg = registry();
+        reg.owners.remove(&server);
+        reg.servers.remove(&server)
+    };
     drop(server);
 }
 
@@ -70,7 +76,7 @@ pub extern "C" fn ws_unlisten(server: u64) {
 /// 400..=599 rejects with that status.
 #[unsafe(no_mangle)]
 pub extern "C" fn ws_reply(token: u64, status: u16, protocol: WsStr) -> c_int {
-    let Some(tx) = registry().replies.remove(&token) else {
+    let Some((_, tx)) = registry().replies.remove(&token) else {
         return OK;
     };
     // Invalid arguments still answer the client, with a server error.

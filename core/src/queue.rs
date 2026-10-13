@@ -1,7 +1,7 @@
 //! Event envelopes retain admission slots until the application drains them.
 
 use crate::{Event, lock};
-use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::Relaxed, Ordering::SeqCst};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 
@@ -35,17 +35,27 @@ pub(crate) struct Queued {
 pub(crate) struct Events {
     tx: Sender<Queued>,
     permit: Arc<Mutex<Option<Arc<Permit>>>>,
+    /// Set once the hub is gone; events sent after that are never read.
+    closed: Arc<AtomicBool>,
 }
 
 impl From<Sender<Queued>> for Events {
     fn from(tx: Sender<Queued>) -> Self {
-        Self { tx, permit: Arc::default() }
+        Self { tx, permit: Arc::default(), closed: Arc::default() }
     }
 }
 
 impl Events {
     pub fn admitted(&self, permit: Arc<Permit>) -> Self {
-        Self { tx: self.tx.clone(), permit: Arc::new(Mutex::new(Some(permit))) }
+        Self { tx: self.tx.clone(), permit: Arc::new(Mutex::new(Some(permit))), closed: self.closed.clone() }
+    }
+
+    pub fn close(&self) {
+        self.closed.store(true, SeqCst);
+    }
+
+    pub fn closed(&self) -> bool {
+        self.closed.load(SeqCst)
     }
 
     pub fn send(&self, event: Event) -> Result<(), ()> {

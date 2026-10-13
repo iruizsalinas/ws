@@ -1,6 +1,8 @@
 //! Compiles the Lua glue (ws.c) with the system C compiler when WS_GLUE=1
 //! (scripts/build.lua sets it). Without it only the Rust ABI is built, so
-//! `cargo check`, `clippy` and `test` need no C compiler.
+//! `cargo check`, `clippy` and `test` need no C compiler. WS_WERROR=1, set
+//! in CI, makes warnings errors; installs leave it off, so a newer compiler's
+//! new warnings cannot break them.
 
 use std::env;
 use std::path::PathBuf;
@@ -10,19 +12,22 @@ fn main() {
     for path in ["ws.c", "ws.h", "luaapi.h"] {
         println!("cargo::rerun-if-changed={path}");
     }
-    for var in ["WS_GLUE", "CC"] {
+    for var in ["WS_GLUE", "WS_WERROR", "CC"] {
         println!("cargo::rerun-if-env-changed={var}");
     }
     println!("cargo::rustc-check-cfg=cfg(glue)");
     if env::var("WS_GLUE").as_deref() != Ok("1") {
         return;
     }
-    let windows = env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows");
-    let macos = env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos");
+    let os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    let (windows, macos) = (os == "windows", os == "macos");
     let object = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR")).join("ws.o");
     let cc = env::var("CC").unwrap_or_else(|_| if windows { "gcc" } else { "cc" }.into());
     let mut cmd = Command::new(&cc);
-    cmd.args(["-c", "-O2", "-std=c99", "-Wall", "-Wextra", "-Werror"]);
+    cmd.args(["-c", "-O2", "-std=c99", "-Wall", "-Wextra"]);
+    if env::var("WS_WERROR").as_deref() == Ok("1") {
+        cmd.arg("-Werror");
+    }
     if !windows {
         cmd.arg("-fPIC");
     }
@@ -37,6 +42,10 @@ fn main() {
     }
     if windows {
         println!("cargo::rustc-link-arg=-lkernel32");
+    }
+    if os == "linux" {
+        // dladdr and dlopen, in libc itself only since glibc 2.34.
+        println!("cargo::rustc-link-arg=-ldl");
     }
     println!("cargo::rustc-cfg=glue");
 }

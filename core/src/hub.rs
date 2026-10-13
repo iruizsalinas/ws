@@ -82,6 +82,20 @@ impl Default for Hub {
     }
 }
 
+/// Ends the connections nobody will receive: queued ones here, later ones
+/// as soon as they see the hub closed (see `Link::emit`).
+impl Drop for Hub {
+    fn drop(&mut self) {
+        self.tx.close();
+        let rx = self.rx.get_mut().unwrap_or_else(|e| e.into_inner());
+        while let Ok(queued) = rx.try_recv() {
+            if let Event::Connection { conn, .. } = queued.event {
+                conn.terminate();
+            }
+        }
+    }
+}
+
 impl Hub {
     /// Waits up to `timeout` (forever if `None`) for the next event.
     pub fn recv(&self, timeout: Option<Duration>) -> Option<Event> {

@@ -15,7 +15,7 @@ const REQUEST: c_int = 7;
 const CONNECTION: c_int = 8;
 const DRAIN: c_int = 9;
 
-/// One event; `data` stays valid until the next call on this thread.
+/// One event; C releases `data` with `ws_free`.
 #[repr(C)]
 pub struct WsEvent {
     kind: c_int,
@@ -35,7 +35,7 @@ fn pack(req: &Request) -> Vec<u8> {
     s.into_bytes()
 }
 
-fn flatten(event: Event) -> (c_int, u64, u64, c_int, Vec<u8>) {
+fn flatten(hub: u64, event: Event) -> (c_int, u64, u64, c_int, Vec<u8>) {
     let mut reg = registry();
     // Inbound data counts as consumed once it is handed over.
     let take = |id, data: Vec<u8>| {
@@ -53,16 +53,18 @@ fn flatten(event: Event) -> (c_int, u64, u64, c_int, Vec<u8>) {
         Event::Drain { id } => (DRAIN, id, 0, 0, Vec::new()),
         Event::Close { id, code, reason } => {
             reg.conns.remove(&id);
+            reg.owners.remove(&id);
             (CLOSE, id, 0, c_int::from(code), reason.into_bytes())
         }
         Event::Request { server, req, reply } => {
             let token = reg.token();
-            reg.replies.insert(token, reply);
+            reg.replies.insert(token, (hub, reply));
             (REQUEST, token, server, 0, pack(&req))
         }
         Event::Connection { server, conn, req } => {
             let id = conn.id();
             reg.conns.insert(id, conn);
+            reg.owners.insert(id, hub);
             (CONNECTION, id, server, 0, pack(&req))
         }
     }
@@ -71,13 +73,13 @@ fn flatten(event: Event) -> (c_int, u64, u64, c_int, Vec<u8>) {
 /// Waits up to `timeout` seconds (forever if negative); 1 if `ev` was
 /// filled, 0 on timeout.
 #[unsafe(no_mangle)]
-pub extern "C" fn ws_wait(hub: u64, timeout: f64, ev: &mut WsEvent) -> c_int {
-    let Some(hub) = registry().hubs.get(&hub).cloned() else {
+pub extern "C" fn ws_wait(hub_id: u64, timeout: f64, ev: &mut WsEvent) -> c_int {
+    let Some(hub) = registry().hubs.get(&hub_id).cloned() else {
         return -fail(FATAL, "unknown hub");
     };
     let timeout = (timeout >= 0.0).then(|| Duration::from_secs_f64(timeout.min(1.0e6)));
     let Some(event) = hub.recv(timeout) else { return 0 };
-    let (kind, id, server, code, data) = flatten(event);
+    let (kind, id, server, code, data) = flatten(hub_id, event);
     *ev = WsEvent { kind, id, server, code, data: out(data) };
     1
 }

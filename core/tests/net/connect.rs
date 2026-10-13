@@ -109,3 +109,36 @@ fn server_close_cancels_an_upgrade_awaiting_a_decision() {
     }
     assert!(hub.recv(Some(Duration::from_millis(50))).is_none());
 }
+
+#[test]
+fn dropping_a_hub_ends_its_connections() {
+    let (hub, clients) = (Hub::default(), Hub::default());
+    let server = listen(&hub);
+    let request = |hub: &Hub| match hub.recv(Some(WAIT)) {
+        Some(Event::Request { reply, .. }) => reply.send(Reply::Accept(None)).unwrap(),
+        e => panic!("unexpected {:?}", e.as_ref().map(describe)),
+    };
+    let opened = |id| assert!(matches!(next(&clients, &accept), Event::Open { id: i } if i == id));
+    // One connection delivered to the application, one still queued.
+    let delivered = clients.connect(&url(&server), ClientOptions::default()).unwrap();
+    request(&hub);
+    let Event::Connection { conn: _peer, .. } = next(&hub, &accept) else { panic!("expected a connection") };
+    opened(delivered.id());
+    let queued = clients.connect(&url(&server), ClientOptions::default()).unwrap();
+    request(&hub);
+    opened(queued.id());
+
+    drop(hub);
+    // The delivered one ends on its next event, which nobody can receive.
+    delivered.send(b"x", false).unwrap();
+    let mut closed = Vec::new();
+    while closed.len() < 2 {
+        match next(&clients, &accept) {
+            Event::Close { id, .. } => closed.push(id),
+            Event::Error { .. } => {}
+            e => panic!("unexpected {}", describe(&e)),
+        }
+    }
+    closed.sort();
+    assert_eq!(closed, [delivered.id(), queued.id()]);
+}

@@ -5,6 +5,10 @@
  * One build serves every Lua version (see luaapi.h). On Windows a DLL would
  * be tied to one Lua DLL name, so the API is looked up at load time in the
  * module that called luaopen_ws_core. */
+#ifndef _WIN32
+#define _GNU_SOURCE /* dladdr */
+#include <dlfcn.h>
+#endif
 #include "luaapi.h"
 #include "ws.h"
 
@@ -33,9 +37,6 @@ WS_LUA_API(X)
 #undef X
 #endif
 
-static const char *const KINDS[] = {
-    NULL, "open", "message", "ping", "pong", "error", "close", "request", "connection", "drain",
-};
 static const char *const STATES[] = {"connecting", "open", "closing", "closed"};
 
 static ws_str opt_str(lua_State *L, int i) {
@@ -72,9 +73,13 @@ static double opt_heartbeat(lua_State *L, int i) {
     return n;
 }
 
+/* Copies a returned string into Lua, then releases it. Should the copy raise
+ * (out of memory, or a finalizer error in Lua 5.1), the string leaks: no
+ * protected call exists in every Lua version, and leaking is safe. */
 static void push_str(lua_State *L, ws_str s) {
     if (s.ptr) lua_pushlstring(L, s.ptr, s.len);
     else lua_pushnil(L);
+    ws_free(s);
 }
 
 /* `true`, or `nil, message, fatal`: the Lua side raises fatal ones. */
@@ -100,19 +105,24 @@ static int l_hub(lua_State *L) {
     return 1;
 }
 
+static int l_shutdown(lua_State *L) {
+    ws_shutdown(check_id(L, 1));
+    return 0;
+}
+
 static int l_now(lua_State *L) {
     lua_pushnumber(L, ws_now());
     return 1;
 }
 
-/* kind, id, data, code, server; nothing on timeout. */
+/* kind (a number, see loop.kinds), id, data, code, server; nothing on
+ * timeout. Numbers never raise, so only copying data can lose it. */
 static int l_wait(lua_State *L) {
     ws_event ev;
     int rc = ws_wait(check_id(L, 1), luaL_optnumber(L, 2, -1), &ev);
     if (rc < 0) return result(L, -rc);
     if (rc == 0) return 0;
-    luaL_argcheck(L, ev.kind > 0 && ev.kind <= 9, 1, "unknown event");
-    lua_pushstring(L, KINDS[ev.kind]);
+    lua_pushinteger(L, ev.kind);
     lua_pushinteger(L, (lua_Integer)ev.id);
     push_str(L, ev.data);
     lua_pushinteger(L, ev.code);
@@ -190,10 +200,12 @@ static const struct {
     const char *name;
     lua_CFunction fn;
 } FUNCS[] = {
-    {"hub", l_hub},       {"now", l_now},           {"wait", l_wait},         {"connect", l_connect},
-    {"listen", l_listen}, {"port", l_port},         {"unlisten", l_unlisten}, {"reply", l_reply},
-    {"send", l_send},     {"ping", l_ping},         {"close", l_close},       {"terminate", l_terminate},
-    {"state", l_state},   {"protocol", l_protocol}, {"buffered", l_buffered},
+    {"hub", l_hub},             {"shutdown", l_shutdown}, {"now", l_now},
+    {"wait", l_wait},           {"connect", l_connect},   {"listen", l_listen},
+    {"port", l_port},           {"unlisten", l_unlisten}, {"reply", l_reply},
+    {"send", l_send},           {"ping", l_ping},         {"close", l_close},
+    {"terminate", l_terminate}, {"state", l_state},       {"protocol", l_protocol},
+    {"buffered", l_buffered},
 };
 
 /* Whether lua_Integer is 64 bits, as luaapi.h assumes: a narrower one
@@ -207,11 +219,26 @@ static int wide_integers(lua_State *L) {
     return *s == *want;
 }
 
+/* Lua unloads C modules when a state closes, but ws threads may still be
+ * finishing (ws_shutdown only starts that), so the module stays loaded. */
+static void pin(void) {
+#ifdef _WIN32
+    HMODULE self;
+    DWORD flags = GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN;
+    (void)GetModuleHandleExA(flags, (LPCSTR)&once, &self);
+#else
+    Dl_info info;
+    if (dladdr((const void *)STATES, &info) && info.dli_fname)
+        (void)dlopen(info.dli_fname, RTLD_NOW | RTLD_NOLOAD | RTLD_NODELETE);
+#endif
+}
+
 int ws_open(lua_State *L) {
     if (!wide_integers(L)) {
         lua_pushstring(L, "ws.core needs a Lua with 64-bit integers");
         return lua_error(L);
     }
+    pin();
     int n = (int)(sizeof FUNCS / sizeof FUNCS[0]);
     lua_createtable(L, 0, n);
     for (int i = 0; i < n; i++) {
