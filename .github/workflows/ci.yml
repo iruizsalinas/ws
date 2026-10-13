@@ -84,8 +84,8 @@ jobs:
           rustup toolchain install stable-x86_64-pc-windows-gnu --profile minimal
           $env:RUSTUP_TOOLCHAIN = 'stable-x86_64-pc-windows-gnu'
           $v = '${{ matrix.lua }}'
-          $dir = (Resolve-Path ".build").Path + "\lua\$v"
           python .github/scripts/lua.py $v
+          $dir = (Resolve-Path ".build").Path + "\lua\$v"
           $lua = "$dir\bin\lua.exe"
           & $lua scripts/build.lua "$dir\include" "$dir\bin\lua$($v -replace '\.', '').dll"
           & $lua tests/run.lua

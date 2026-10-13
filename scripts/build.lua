@@ -10,6 +10,16 @@ local include, library, output = arg[1], arg[2], arg[3]
 assert(include, "usage: lua scripts/build.lua <lua include dir> [lua library] [output]")
 assert(not windows or library, "on Windows, pass the Lua DLL to link against")
 
+-- Cargo runs build scripts from the crate folder, so pass absolute paths.
+local function absolute(path)
+  if not path or path:find("^/") or path:find("^%a:[/\\]") or path:find("^\\\\") then
+    return path
+  end
+  local cwd = windows and io.popen("cd"):read("*l") or os.getenv("PWD")
+  return cwd .. (windows and "\\" or "/") .. path
+end
+include, library = absolute(include), absolute(library)
+
 local function quote(s)
   if windows then
     assert(not s:find('["%%!]'), "unsupported characters in path: " .. s)
