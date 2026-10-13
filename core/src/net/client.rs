@@ -1,11 +1,11 @@
 //! Outgoing connections.
 
 use super::dial::dial;
-use super::link::Link;
+use super::link::{Config, Link};
 use super::stream::{HeadError, Stream};
 use crate::proto::{base64, handshake, http, url};
 use crate::queue::Events;
-use crate::{Event, Headers, Id, MAX_BUFFER, MAX_MESSAGE, State, random, tls};
+use crate::{Event, Headers, Id, KEEPALIVE, MAX_BUFFER, MAX_MESSAGE, State, random, tls};
 use rustls::pki_types::ServerName;
 use rustls::{ClientConfig, ClientConnection, Connection};
 use std::net::{TcpStream, ToSocketAddrs};
@@ -20,6 +20,8 @@ pub struct Options {
     pub timeout: Duration,
     pub max_message: usize,
     pub max_buffer: usize,
+    /// Silence before a ping; `None` disables keepalive.
+    pub keepalive: Option<Duration>,
 }
 
 impl Default for Options {
@@ -31,6 +33,7 @@ impl Default for Options {
             timeout: Duration::from_secs(10),
             max_message: MAX_MESSAGE,
             max_buffer: MAX_BUFFER,
+            keepalive: Some(KEEPALIVE),
         }
     }
 }
@@ -44,6 +47,9 @@ pub(crate) fn connect(events: Events, id: Id, input: &str, opts: Options) -> Res
     let url = url::parse(input)?;
     if opts.max_message == 0 || opts.max_buffer == 0 {
         return Err("limits must be positive".into());
+    }
+    if opts.keepalive.is_some_and(|k| k.is_zero()) {
+        return Err("keepalive must be positive".into());
     }
     for (i, p) in opts.protocols.iter().enumerate() {
         if !http::is_token(p) || opts.protocols[..i].contains(p) {
@@ -65,7 +71,8 @@ pub(crate) fn connect(events: Events, id: Id, input: &str, opts: Options) -> Res
         false => None,
     };
     let deadline = Instant::now().checked_add(opts.timeout).ok_or("connection timeout is too large")?;
-    let link = Link::new(id, false, opts.max_message, opts.max_buffer, events);
+    let config = Config { message: opts.max_message, buffer: opts.max_buffer, keepalive: opts.keepalive };
+    let link = Link::new(id, false, config, events);
     let target = Target { url, tls };
     let worker = link.clone();
     std::thread::Builder::new()

@@ -3,23 +3,44 @@
 //! Lock order is `flags` -> `tls` -> `queue`. TLS records are sealed while
 //! `tls` is held and queued before it is released, so they stay in order.
 
+mod alive;
 mod close;
 mod handle;
 mod read;
+mod send;
 mod write;
 
 use crate::queue::Events;
 use crate::{Event, Id, lock};
 use rustls::Connection;
+use send::Queue;
 use std::net::TcpStream;
-use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering::Relaxed};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::{Duration, Instant};
-use write::Queue;
 
 const CLOSE_TIMEOUT: Duration = Duration::from_secs(5);
 /// Accounting cost of an event beyond its payload.
 const EVENT_COST: usize = 64;
+
+/// Per-connection settings.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Config {
+    /// Largest message accepted, in bytes.
+    pub message: usize,
+    /// Stop accepting application frames while the writer is this far behind.
+    pub buffer: usize,
+    /// Ping after this much silence; drop the peer after as much again.
+    pub keepalive: Option<Duration>,
+}
+
+#[cfg(test)]
+impl Config {
+    /// Defaults with keepalive off, for tests that drive a link by hand.
+    pub fn test(message: usize) -> Self {
+        Config { message, buffer: crate::MAX_BUFFER, keepalive: None }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum State {
@@ -48,8 +69,10 @@ pub(crate) struct Link {
     id: Id,
     server: bool,
     max: usize,
-    /// Stop accepting application frames while the writer is this far behind.
     buffer: usize,
+    keepalive: Option<Duration>,
+    /// Payload of keepalive pings, so their pongs are not reported.
+    token: [u8; 8],
     events: Events,
     flags: Mutex<Flags>,
     queue: Mutex<Queue>,
@@ -58,18 +81,24 @@ pub(crate) struct Link {
     inbox: AtomicUsize,
     /// Signals inbox space and write progress; always paired with `queue`.
     drained: Condvar,
+    /// When the link was created, and milliseconds after it of the last
+    /// write the peer acknowledged by making room for more.
+    born: Instant,
+    acked: AtomicU64,
     io: OnceLock<Io>,
     protocol: OnceLock<Option<String>>,
 }
 
 impl Link {
-    pub fn new(id: Id, server: bool, max: usize, buffer: usize, events: Events) -> Arc<Link> {
+    pub fn new(id: Id, server: bool, config: Config, events: Events) -> Arc<Link> {
         let flags = Flags { state: State::Connecting, sent_close: false, received: None, failed: None, deadline: None };
         Arc::new(Link {
             id,
             server,
-            max,
-            buffer,
+            max: config.message,
+            buffer: config.buffer,
+            keepalive: config.keepalive,
+            token: crate::random(),
             events,
             flags: Mutex::new(flags),
             queue: Mutex::default(),
@@ -77,6 +106,8 @@ impl Link {
             buffered: AtomicUsize::new(0),
             inbox: AtomicUsize::new(0),
             drained: Condvar::new(),
+            born: Instant::now(),
+            acked: AtomicU64::new(0),
             io: OnceLock::new(),
             protocol: OnceLock::new(),
         })
@@ -96,29 +127,6 @@ impl Link {
 
     pub fn buffered(&self) -> usize {
         if self.state() == State::Closed { 0 } else { self.buffered.load(Relaxed) }
-    }
-
-    /// Sends a data or ping frame; fails unless the connection is open.
-    pub fn send(&self, op: u8, payload: &[u8]) -> Result<(), &'static str> {
-        let f = lock(&self.flags);
-        if f.state != State::Open || f.sent_close {
-            return Err(if f.state == State::Connecting { "not open yet" } else { "closed" });
-        }
-        // Checked under flags, which serializes application sends. A single
-        // large frame is allowed to cross the threshold; subsequent sends
-        // must wait for the writer, including its currently in-flight batch.
-        if self.buffered.load(Relaxed) >= self.buffer {
-            return Err("send buffer is full");
-        }
-        self.push(self.frame(op, payload));
-        Ok(())
-    }
-
-    /// Called once the application has taken an inbound event.
-    pub fn consumed(&self, bytes: usize) {
-        let _q = lock(&self.queue);
-        self.inbox.fetch_sub(bytes + EVENT_COST, Relaxed);
-        self.drained.notify_one();
     }
 
     pub fn fail(&self, error: &str) {

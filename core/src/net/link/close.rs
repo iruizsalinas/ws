@@ -80,4 +80,9 @@ impl Link {
             q = self.drained.wait_timeout(q, left).unwrap_or_else(|e| e.into_inner()).0;
         }
     }
+
+    /// Whether the closing handshake ran out of time.
+    pub(super) fn expired(&self) -> bool {
+        lock(&self.flags).deadline.is_some_and(|d| Instant::now() >= d)
+    }
 }

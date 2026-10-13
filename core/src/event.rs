@@ -53,6 +53,10 @@ pub enum Event {
         id: Id,
         error: String,
     },
+    /// A send was refused for a full buffer, and there is room again.
+    Drain {
+        id: Id,
+    },
     /// Always the last event of a connection.
     Close {
         id: Id,

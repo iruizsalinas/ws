@@ -13,7 +13,7 @@
 #endif
 
 static const char *const KINDS[] = {
-    NULL, "open", "message", "ping", "pong", "error", "close", "request", "connection",
+    NULL, "open", "message", "ping", "pong", "error", "close", "request", "connection", "drain",
 };
 static const char *const STATES[] = {"connecting", "open", "closing", "closed"};
 
@@ -37,6 +37,18 @@ static uint64_t opt_size(lua_State *L, int i) {
     uint64_t size = (uint64_t)n;
     luaL_argcheck(L, (lua_Number)size == n, i, "invalid size");
     return size;
+}
+
+/* nil keeps the default (-1), false disables (0), else positive seconds. */
+static double opt_keepalive(lua_State *L, int i) {
+    if (lua_isnoneornil(L, i)) return -1;
+    if (lua_isboolean(L, i)) {
+        luaL_argcheck(L, !lua_toboolean(L, i), i, "invalid keepalive");
+        return 0;
+    }
+    lua_Number n = luaL_checknumber(L, i);
+    luaL_argcheck(L, n > 0 && n <= 1e6, i, "invalid keepalive");
+    return n;
 }
 
 static void push_str(lua_State *L, ws_str s) {
@@ -78,7 +90,7 @@ static int l_wait(lua_State *L) {
     int rc = ws_wait(check_id(L, 1), luaL_optnumber(L, 2, -1), &ev);
     if (rc < 0) return result(L, -rc);
     if (rc == 0) return 0;
-    luaL_argcheck(L, ev.kind > 0 && ev.kind <= 8, 1, "unknown event");
+    luaL_argcheck(L, ev.kind > 0 && ev.kind <= 9, 1, "unknown event");
     lua_pushstring(L, KINDS[ev.kind]);
     lua_pushinteger(L, (lua_Integer)ev.id);
     push_str(L, ev.data);
@@ -90,7 +102,7 @@ static int l_wait(lua_State *L) {
 static int l_connect(lua_State *L) {
     uint64_t id = 0;
     int rc = ws_connect(check_id(L, 1), opt_str(L, 2), opt_str(L, 3), opt_str(L, 4), opt_str(L, 5),
-                        luaL_optnumber(L, 6, 0), opt_size(L, 7), opt_size(L, 8), &id);
+                        luaL_optnumber(L, 6, 0), opt_size(L, 7), opt_size(L, 8), opt_keepalive(L, 9), &id);
     return handle(L, rc, id);
 }
 
@@ -99,7 +111,7 @@ static int l_listen(lua_State *L) {
     lua_Integer port = luaL_checkinteger(L, 3);
     luaL_argcheck(L, port >= 0 && port <= 65535, 3, "invalid port");
     int rc = ws_listen(check_id(L, 1), opt_str(L, 2), (uint16_t)port, opt_str(L, 4), opt_str(L, 5),
-                       opt_size(L, 6), opt_size(L, 7), opt_size(L, 8), &id);
+                       opt_size(L, 6), opt_size(L, 7), opt_size(L, 8), opt_keepalive(L, 9), &id);
     return handle(L, rc, id);
 }
 

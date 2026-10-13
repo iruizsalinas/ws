@@ -1,18 +1,15 @@
 //! Startup and the reader thread.
 
-use super::write::{Item, seal};
+use super::alive::Alive;
+use super::send::{Item, seal};
 use super::{Io, Link, State};
 use crate::proto::reader::Reader;
 use crate::{Event, TICK, lock};
 use rustls::Connection;
 use std::io::{ErrorKind, Read};
 use std::net::TcpStream;
-use std::sync::atomic::Ordering::Relaxed;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
-
-/// Undelivered inbound bytes before the reader waits for the application.
-pub(super) const INBOX_LIMIT: usize = 1 << 20;
 
 impl Link {
     /// Switches to the open state and runs the connection to completion.
@@ -28,7 +25,9 @@ impl Link {
             return self.fail("cannot clone socket");
         };
         let _ = tcp.set_nodelay(true);
-        let _ = tcp.set_write_timeout(None);
+        // Bounds each write attempt, so the writer notices a close even
+        // while the peer has stopped reading (see write_out).
+        let _ = tcp.set_write_timeout(Some(TICK));
         let _ = self.protocol.set(protocol);
         let tls = tls.map(|mut t| {
             t.set_buffer_limit(None);
@@ -51,12 +50,13 @@ impl Link {
     }
 
     fn read_loop(&self, mut tcp: TcpStream, rest: Vec<u8>) {
-        let _ = tcp.set_read_timeout(Some(TICK));
+        let _ = tcp.set_read_timeout(Some(self.tick()));
         let tls = self.io.get().and_then(|io| io.tls.as_ref());
         let mut reader = Reader::new(self.server, self.max);
         let mut plain = rest;
         let mut ok = true;
         let mut buf = vec![0u8; 16 * 1024];
+        let mut alive = Alive::new();
         if let Some(tls) = tls
             && let Err(e) = self.open(tls, &[], &mut plain)
         {
@@ -75,18 +75,27 @@ impl Link {
             if !self.wait_inbox() {
                 continue;
             }
-            match tcp.read(&mut buf) {
+            let n = match tcp.read(&mut buf) {
                 Ok(0) => break,
-                Ok(n) => match tls {
-                    Some(tls) => match self.open(tls, &buf[..n], &mut plain) {
-                        Ok(true) => {}
-                        Ok(false) => break,
-                        Err(e) => return self.fail(&e),
-                    },
-                    None => plain.extend_from_slice(&buf[..n]),
-                },
-                Err(e) if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut | ErrorKind::Interrupted) => {}
+                Ok(n) => n,
+                // Nothing to read: the only point where silence is measured.
+                Err(e) if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {
+                    if !self.keepalive(&mut alive) {
+                        break;
+                    }
+                    continue;
+                }
+                Err(e) if e.kind() == ErrorKind::Interrupted => continue,
                 Err(_) => break,
+            };
+            alive.seen = Instant::now();
+            match tls {
+                Some(tls) => match self.open(tls, &buf[..n], &mut plain) {
+                    Ok(true) => {}
+                    Ok(false) => break,
+                    Err(e) => return self.fail(&e),
+                },
+                None => plain.extend_from_slice(&buf[..n]),
             }
         }
         // Process anything decrypted alongside a close_notify.
@@ -96,27 +105,6 @@ impl Link {
         }
         self.flush_close();
         self.end();
-    }
-
-    /// Backpressure: waits (one tick at most) while the application lags.
-    fn wait_inbox(&self) -> bool {
-        // Keep reading the closing handshake even if the application stopped
-        // consuming events. Delivery stays bounded while closing.
-        if self.state() != State::Open {
-            return true;
-        }
-        if self.inbox.load(Relaxed) < INBOX_LIMIT {
-            return true;
-        }
-        let q = lock(&self.queue);
-        if self.inbox.load(Relaxed) >= INBOX_LIMIT {
-            let _ = self.drained.wait_timeout(q, TICK);
-        }
-        self.inbox.load(Relaxed) < INBOX_LIMIT
-    }
-
-    fn expired(&self) -> bool {
-        lock(&self.flags).deadline.is_some_and(|d| Instant::now() >= d)
     }
 
     /// Decrypts `raw` into `plain`; `Ok(false)` once the peer sent close_notify.

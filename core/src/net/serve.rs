@@ -81,7 +81,7 @@ pub(super) fn serve(shared: &Shared, tcp: TcpStream, permit: Arc<Permit>) {
         return;
     }
     pending.done();
-    let link = Link::new(crate::next_id(), true, shared.max, shared.buffer, events);
+    let link = Link::new(crate::next_id(), true, shared.config, events);
     let open = Event::Connection { server: shared.id, conn: Conn(link.clone()), req };
     link.start(s.tcp, s.tls, rest, protocol, open);
 }

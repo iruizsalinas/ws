@@ -19,6 +19,11 @@ local kinds = {
     if type(v) == "number" and v > 0 and v < math.huge then return v end
     return nil, "a positive number of seconds"
   end,
+  -- Seconds, or false to turn the feature off.
+  keepalive = function(v)
+    if v == false or (type(v) == "number" and v > 0 and v <= 1e6) then return v end
+    return nil, "a positive number of seconds or false"
+  end,
   size = function(v)
     if integer(v, 1, 2 ^ 53) then return v end
     return nil, "a positive integer"

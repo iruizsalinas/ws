@@ -8,6 +8,7 @@ local Socket = require("ws.socket")
 local EVENTS = { connection = true }
 local OPTIONS = {
   port = "port", host = "string", protocols = "list", accept = "function", cert = "string", key = "string",
+  keepalive = "keepalive",
   limits = { message = "size", buffer = "size", connections = "size" },
 }
 
@@ -22,8 +23,8 @@ function Server.listen(arg)
     error("option 'port' is required", 2)
   end
   local limits = o.limits or {}
-  local host = o.host or "0.0.0.0"
-  local id, err = core.listen(loop.hub, host, o.port, o.cert, o.key, limits.message, limits.buffer, limits.connections)
+  local id, err = core.listen(loop.hub, o.host or "0.0.0.0", o.port, o.cert, o.key,
+    limits.message, limits.buffer, limits.connections, o.keepalive)
   if not id then
     error(err, 2)
   end

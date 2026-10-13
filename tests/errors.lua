@@ -17,6 +17,12 @@ H.test("invalid arguments raise", function()
   H.raises(function() ws.connect("ws://x", { limits = { message = 0 } }) end, "option 'limits.message' must be")
   H.raises(function() ws.connect("ws://x", { limits = { buffer = 0 } }) end, "option 'limits.buffer' must be")
   H.raises(function() ws.listen({ port = 0, limits = { buffer = -1 } }) end, "option 'limits.buffer' must be")
+  for _, bad in ipairs({ 0, -1, true, "30", 0 / 0, math.huge, 2e6 }) do
+    H.raises(function() ws.connect("ws://x", { keepalive = bad }) end, "option 'keepalive' must be")
+    H.raises(function() ws.listen({ port = 0, keepalive = bad }) end, "option 'keepalive' must be")
+  end
+  ws.listen({ port = 0, keepalive = false }):close()
+  ws.listen({ port = 0, keepalive = 0.5 }):close()
   H.raises(function() ws.connect("ws://x", { limits = { connections = 1 } }) end, "unknown option 'limits.connections'")
   H.raises(function() ws.connect("ws://x", { limit = 1000 }) end, "unknown option 'limit'")
   H.raises(function() ws.listen({ port = 0, cert = "a.pem" }) end, "go together")

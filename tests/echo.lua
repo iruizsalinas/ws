@@ -35,12 +35,15 @@ H.test("large message within a raised limit", function()
   H.eq(echoed == big, true, "2 MB roundtrip")
 end)
 
-H.test("a full send buffer rejects sends until it drains", function()
-  -- The server stops reading while this test sends, so unsent data piles up.
+H.test("a full send buffer refuses sends, then drain says when to resume", function()
+  -- The server cannot read while the open handler keeps sending.
   local server = H.server({ limits = { message = 1024 * 1024 } })
   local chunk = string.rep("x", 256 * 1024)
   local c = ws.connect(H.url(server), { limits = { buffer = 1024 * 1024 } })
-  local accepted, err = 0, nil
+  local accepted, err, drains, resumed, last = 0, nil, 0, nil, nil
+  server:on("connection", function(s)
+    s:on("message", function(data) last = data end)
+  end)
   c:on("open", function()
     for _ = 1, 400 do
       local ok, e = c:send(chunk, true)
@@ -50,12 +53,19 @@ H.test("a full send buffer rejects sends until it drains", function()
       end
       accepted = accepted + 1
     end
-    c:terminate()
-    server:close()
   end)
+  c:on("drain", function()
+    drains = drains + 1
+    resumed = c:send("after")
+    c:close()
+  end)
+  c:on("close", function() server:close() end)
   H.run()
   H.eq(err, "send buffer is full")
   assert(accepted >= 4, "sends below the limit are accepted")
+  H.eq(drains, 1, "drain events")
+  H.eq(resumed, true, "send after drain")
+  H.eq(last, "after", "last message the server got")
 end)
 
 H.test("ping and pong", function()

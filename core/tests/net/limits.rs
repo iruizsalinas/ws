@@ -52,3 +52,31 @@ fn admission_limit_includes_open_connections_and_recovers_after_close() {
     }
     assert_eq!(conn.state(), State::Closed, "keeping a closed handle must not retain capacity");
 }
+
+#[test]
+fn drain_follows_a_refused_send_once_there_is_room() {
+    let hub = Hub::default();
+    let opts = ServerOptions { host: "127.0.0.1".into(), max_buffer: 1, keepalive: None, ..Default::default() };
+    let server = hub.listen(opts).unwrap();
+    let (mut raw, conn) = Raw::open(&server, &hub);
+    let big = vec![7u8; 32 << 20];
+    conn.send(&big, true).unwrap();
+    // Refused while the first message is still leaving the process.
+    assert_eq!(conn.send(b"x", true), Err("send buffer is full"));
+    // Room may come from kernel buffers or from the peer reading; read on
+    // another thread so the test does not depend on their size.
+    // The thread hands the socket back, so the connection outlives it.
+    let reader = std::thread::spawn(move || (raw.frame(), raw.frame(), raw));
+    match next(&hub, &accept) {
+        Event::Drain { id } => assert_eq!(id, conn.id()),
+        e => panic!("unexpected {}", describe(&e)),
+    }
+    conn.send(b"after", true).unwrap();
+    let (first, second, _raw) = reader.join().unwrap();
+    assert_eq!(first, (frame::BINARY, big), "the refused frame was not queued");
+    assert_eq!(second, (frame::BINARY, b"after".to_vec()));
+    if let Some(e) = hub.recv(Some(Duration::from_millis(100))) {
+        panic!("unexpected {} after the drain", describe(&e));
+    }
+    conn.terminate();
+}

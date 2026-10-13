@@ -4,9 +4,11 @@ local emitter = require("ws.emitter")
 local loop = require("ws.loop")
 local opts = require("ws.opts")
 
-local EVENTS = { open = true, message = true, ping = true, pong = true, close = true, error = true }
+local EVENTS = {
+  open = true, message = true, ping = true, pong = true, drain = true, close = true, error = true,
+}
 local OPTIONS = {
-  protocols = "list", headers = "headers", ca = "string", timeout = "seconds",
+  protocols = "list", headers = "headers", ca = "string", timeout = "seconds", keepalive = "keepalive",
   limits = { message = "size", buffer = "size" },
 }
 
@@ -41,7 +43,7 @@ function Socket.connect(url, options)
   local o = opts.check(options, OPTIONS, 2)
   local protocols = o.protocols and table.concat(o.protocols, "\n")
   local limits = o.limits or {}
-  local id, err = core.connect(loop.hub, url, protocols, o.headers, o.ca, o.timeout, limits.message, limits.buffer)
+  local id, err = core.connect(loop.hub, url, protocols, o.headers, o.ca, o.timeout, limits.message, limits.buffer, o.keepalive)
   if not id then
     error(err, 2)
   end
@@ -93,6 +95,7 @@ local h = loop.handlers
 h.open = emit("open")
 h.ping = emit("ping")
 h.pong = emit("pong")
+h.drain = emit("drain")
 
 function h.message(id, data, binary)
   local s = loop.sockets[id]

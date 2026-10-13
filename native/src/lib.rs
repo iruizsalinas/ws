@@ -4,6 +4,7 @@ mod conn;
 mod event;
 mod ffi;
 mod hub;
+mod server;
 
 #[cfg(glue)]
 mod glue {

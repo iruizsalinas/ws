@@ -13,6 +13,7 @@ const ERROR: c_int = 5;
 const CLOSE: c_int = 6;
 const REQUEST: c_int = 7;
 const CONNECTION: c_int = 8;
+const DRAIN: c_int = 9;
 
 /// One event; `data` stays valid until the next call on this thread.
 #[repr(C)]
@@ -49,6 +50,7 @@ fn flatten(event: Event) -> (c_int, u64, u64, c_int, Vec<u8>) {
         Event::Ping { id, data } => (PING, id, 0, 0, take(id, data)),
         Event::Pong { id, data } => (PONG, id, 0, 0, take(id, data)),
         Event::Error { id, error } => (ERROR, id, 0, 0, error.into_bytes()),
+        Event::Drain { id } => (DRAIN, id, 0, 0, Vec::new()),
         Event::Close { id, code, reason } => {
             reg.conns.remove(&id);
             (CLOSE, id, 0, c_int::from(code), reason.into_bytes())

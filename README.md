@@ -78,7 +78,7 @@ ws.run()
 
 **Properties:** `state`, `protocol`, `url`, `buffered`
 
-**Events:** `open`, `message`, `ping`, `pong`, `close`, `error`
+**Events:** `open`, `message`, `ping`, `pong`, `drain`, `close`, `error`
 
 ### Server
 
@@ -99,8 +99,9 @@ ws.run()
 | `headers` | `nil` | Extra request headers |
 | `ca` | `nil` | Path to a PEM file of trusted certificates |
 | `timeout` | `10` | Connection timeout in seconds |
+| `keepalive` | `30` | Seconds of silence before a ping; the connection closes if the peer stays silent as long again. `false` disables |
 | `limits.message` | `1048576` | Maximum message size in bytes (1 MiB) |
-| `limits.buffer` | `16777216` | Unsent bytes allowed before `send` returns `nil, "send buffer is full"` (16 MiB) |
+| `limits.buffer` | `16777216` | Unsent bytes allowed before `send` returns `nil, "send buffer is full"` (16 MiB); `drain` fires when there is room again |
 
 ### Server Options
 
@@ -112,8 +113,9 @@ ws.run()
 | `accept` | `nil` | `function(req)` returning `true` to accept, or `false, status` to reject |
 | `cert` | `nil` | Path to a PEM certificate, to serve `wss://` |
 | `key` | `nil` | Path to the PEM private key |
+| `keepalive` | `30` | Seconds of silence before a ping; the connection closes if the peer stays silent as long again. `false` disables |
 | `limits.message` | `1048576` | Maximum message size in bytes (1 MiB) |
-| `limits.buffer` | `16777216` | Unsent bytes allowed before `send` returns `nil, "send buffer is full"` (16 MiB) |
+| `limits.buffer` | `16777216` | Unsent bytes allowed before `send` returns `nil, "send buffer is full"` (16 MiB); `drain` fires when there is room again |
 | `limits.connections` | `nil` | Maximum concurrent connections; extra ones are dropped (unlimited by default) |
 
 ## License

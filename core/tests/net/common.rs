@@ -39,6 +39,7 @@ pub fn describe(e: &Event) -> String {
         Event::Ping { id, .. } => format!("ping {id}"),
         Event::Pong { id, .. } => format!("pong {id}"),
         Event::Error { id, error } => format!("error {id} {error}"),
+        Event::Drain { id } => format!("drain {id}"),
         Event::Close { id, code, reason } => format!("close {id} {code} {reason}"),
     }
 }
@@ -94,6 +95,23 @@ impl Raw {
         raw
     }
 
+    /// Upgrades, returning the raw client and the server's handle for it.
+    pub fn open(server: &Server, hub: &Hub) -> (Raw, Conn) {
+        let mut raw = Raw::connect(server);
+        raw.0.write_all(UPGRADE.as_bytes()).unwrap();
+        let Event::Connection { conn, .. } = next(hub, &accept) else { panic!("expected a connection") };
+        assert!(raw.request("").starts_with("HTTP/1.1 101 "));
+        (raw, conn)
+    }
+
+    /// Whether nothing at all arrives within `wait`.
+    pub fn quiet(&mut self, wait: Duration) -> bool {
+        self.0.set_read_timeout(Some(wait)).unwrap();
+        let r = self.0.read(&mut [0u8; 1]);
+        self.0.set_read_timeout(Some(WAIT)).unwrap();
+        matches!(r, Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut))
+    }
+
     pub fn send(&mut self, op: u8, payload: &[u8]) {
         self.0.write_all(&frame::encode(op, payload, Some([9, 8, 7, 6]))).unwrap();
     }
@@ -120,7 +138,6 @@ impl Raw {
         (h[0] & 0x0F, p)
     }
 
-    /// Reads until the server closes the TCP connection.
     /// Reads until the server closes the TCP connection.
     pub fn eof(&mut self) {
         let mut rest = Vec::new();
