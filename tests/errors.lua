@@ -26,6 +26,8 @@ H.test("invalid arguments raise", function()
   end
   ws.listen({ port = 0, heartbeat = false }):close()
   ws.listen({ port = 0, heartbeat = 0.5 }):close()
+  -- The 0.1 name is refused, not silently ignored.
+  H.raises(function() ws.connect("ws://x", { keepalive = 30 }) end, "unknown option 'keepalive'")
   H.raises(function() ws.connect("ws://x", { limits = { connections = 1 } }) end, "unknown option 'limits.connections'")
   H.raises(function() ws.connect("ws://x", { limit = 1000 }) end, "unknown option 'limit'")
   H.raises(function() ws.listen({ port = 0, tls = { cert = "a.pem" } }) end, "options 'tls.cert' and 'tls.key' go together")
