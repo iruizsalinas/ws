@@ -11,8 +11,9 @@ import subprocess
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[2]
-TOOLS = ["sh", "ls", "uname", "mkdir", "cp", "mv", "rm", "find", "chmod", "tar", "gzip", "gunzip",
-         "unzip", "zip", "pwd", "sed", "test", "wget", "curl", "tr", "dirname", "basename", "cat"]
+TOOLS = ["sh", "ls", "uname", "mkdir", "rmdir", "cp", "mv", "rm", "ln", "touch", "find", "chmod", "tar",
+         "gzip", "gunzip", "unzip", "zip", "pwd", "sed", "test", "wget", "curl", "tr", "dirname", "basename",
+         "cat", "md5sum", "md5", "openssl", "stat", "readlink", "realpath", "mktemp", "id", "env", "head"]
 FORBIDDEN = ["gcc", "cc", "clang", "make", "cmake", "cargo", "rustc"]
 
 

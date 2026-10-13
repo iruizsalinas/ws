@@ -112,5 +112,7 @@ fn message_too_big() {
     }
     events.sort();
     let (c, p) = (client.id(), peer.id());
-    assert_eq!(events, [format!("close {c} 1009 "), format!("close {p} 1009 "), format!("error {p} message too big")]);
+    let mut expected = [format!("close {c} 1009 "), format!("close {p} 1009 "), format!("error {p} message too big")];
+    expected.sort();
+    assert_eq!(events, expected);
 }
