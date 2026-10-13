@@ -15,8 +15,18 @@ local OPTIONS = {
 
 local Socket = {}
 
+-- Network threads move the native state on; this one follows the events
+-- delivered so far, as in browsers ("open" and "closed" with their events).
+local function state(s)
+  if loop.sockets[s.id] ~= s then return "closed" end
+  local native = core.state(s.id)
+  if native == "closed" then return "closing" end
+  if native == "open" and not s._opened then return "connecting" end
+  return native
+end
+
 local getters = {
-  state = function(s) return core.state(s.id) end,
+  state = state,
   protocol = function(s) return core.protocol(s.id) end,
   buffered = function(s) return core.buffered(s.id) end,
 }
@@ -27,12 +37,13 @@ local meta = {
     if get then return get(s) end
     return Socket[key]
   end,
-  __tostring = function(s) return "ws.socket (" .. core.state(s.id) .. ")" end,
+  __tostring = function(s) return "ws.socket (" .. state(s) .. ")" end,
 }
 
 -- `server` is the accepting server, or nil for clients.
 function Socket.new(id, url, server)
-  local s = setmetatable({ id = id, url = url, server = server, _on = {} }, meta)
+  -- Accepted sockets are open by their connection event.
+  local s = setmetatable({ id = id, url = url, server = server, _opened = server ~= nil, _on = {} }, meta)
   loop.sockets[id] = s
   return s
 end
@@ -108,7 +119,10 @@ local function emit(name)
 end
 
 local h = loop.handlers
-h.open = emit("open")
+function h.open(id)
+  local s = loop.sockets[id]
+  if s then s._opened = true; emitter.emit(s, "open") end
+end
 h.ping = emit("ping")
 h.pong = emit("pong")
 h.drain = emit("drain")

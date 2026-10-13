@@ -89,3 +89,40 @@ H.test("closed sockets refuse to send", function()
   H.eq(late[2], "closed", "late error")
   H.eq(c.buffered, 0, "buffered after close")
 end)
+
+H.test("state follows the events delivered, not the network threads", function()
+  local core = require("ws.core")
+  local server = H.echo()
+  local c = ws.connect(H.url(server))
+  -- Waits for the network threads without delivering any events.
+  local function settle(want)
+    local deadline = os.clock() + 5
+    while core.state(c.id) ~= want do
+      assert(os.clock() < deadline, "the connection never became " .. want)
+    end
+  end
+  -- The server accepts in Lua, so wait for the client once it has. The
+  -- client's open event may be delivered first; usually it is still queued.
+  local opened, early, final = false, nil, nil
+  server:on("connection", function(peer)
+    settle("open")
+    early = c.state
+    H.eq(early, opened and "open" or "connecting", "before the open event")
+    peer:send("hi")
+  end)
+  c:on("open", function()
+    opened = true
+    H.eq(c.state, "open", "in the open event")
+  end)
+  -- Arrives after both events above.
+  c:on("message", function()
+    c:close()
+    settle("closed")
+    H.eq(c.state, "closing", "before the close event")
+    H.eq(tostring(c), "ws.socket (closing)")
+  end)
+  c:on("close", function() final = c.state end)
+  H.run()
+  assert(early, "connection event")
+  H.eq(final, "closed", "in the close event")
+end)
