@@ -54,6 +54,10 @@ def main(lua, luarocks):
     config = work / "config.lua"
     config.write_text(f'rocks_servers = {{ "{server.as_posix()}" }}\n')
     env = dict(os.environ, LUAROCKS_CONFIG=str(config), PATH=isolated_path(lua, luarocks, work))
+    # MSYSTEM (set by the MSYS2 CI setup) switches LuaRocks to MSYS2 mode,
+    # which needs cygpath and Unix tools; plain Windows users have neither.
+    for name in ["MSYSTEM", "MINGW_PREFIX", "MSYS2_LOCATION"]:
+        env.pop(name, None)
     for name in FORBIDDEN:
         assert shutil.which(name, path=env["PATH"]) is None, f"{name} leaked into the install test"
     tree = work / "tree"
