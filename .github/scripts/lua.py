@@ -8,7 +8,8 @@ import platform
 import shutil
 import subprocess
 import tarfile
-import urllib.request
+
+from fetch import download
 
 ROOT = Path(__file__).resolve().parents[2]
 # Official lua.org releases and their SHA-256 digests.
@@ -27,8 +28,7 @@ def build(version, cc="gcc", jobs=4):
     archive = work / "downloads" / ("lua-" + release + ".tar.gz")
     archive.parent.mkdir(parents=True, exist_ok=True)
     if not archive.exists():
-        with urllib.request.urlopen("https://www.lua.org/ftp/" + archive.name, timeout=120) as response:
-            archive.write_bytes(response.read())
+        download("https://www.lua.org/ftp/" + archive.name, archive)
     assert hashlib.sha256(archive.read_bytes()).hexdigest() == digest, "Lua checksum mismatch"
     with tarfile.open(archive) as tf:
         tf.extractall(work / "sources", filter="data")

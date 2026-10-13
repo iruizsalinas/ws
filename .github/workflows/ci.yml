@@ -103,7 +103,7 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
       - name: Toolchain
         run: |
-          curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+          curl -sSf --retry 5 --retry-connrefused https://sh.rustup.rs | sh -s -- -y --profile minimal
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
           echo /opt/python/cp313-cp313/bin >> "$GITHUB_PATH"
       - name: Build and test
@@ -141,7 +141,7 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           if ! command -v rustup >/dev/null; then
-            curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+            curl -sSf --retry 5 --retry-connrefused https://sh.rustup.rs | sh -s -- -y --profile minimal
             export PATH="$HOME/.cargo/bin:$PATH"
           fi
           sh .github/scripts/bundle.sh '${{ matrix.lua }}'

@@ -5,8 +5,9 @@ import os
 from pathlib import Path
 import subprocess
 import tarfile
-import urllib.request
 import zipfile
+
+from fetch import download
 
 ROOT = Path(__file__).resolve().parents[2]
 parser = argparse.ArgumentParser(description=__doc__)
@@ -23,8 +24,7 @@ else:
     url = "https://luarocks.org/releases/luarocks-3.13.0.tar.gz"
     digest = "245bf6ec560c042cb8948e3d661189292587c5949104677f1eecddc54dbe7e37"
 if not archive.exists():
-    with urllib.request.urlopen(url, timeout=120) as response:
-        archive.write_bytes(response.read())
+    download(url, archive)
 assert hashlib.sha256(archive.read_bytes()).hexdigest() == digest
 if os.name == "nt":
     with zipfile.ZipFile(archive) as zf:
