@@ -8,7 +8,7 @@ local EVENTS = {
   open = true, message = true, ping = true, pong = true, drain = true, close = true, error = true,
 }
 local OPTIONS = {
-  protocols = "list", headers = "headers", timeout = "seconds", keepalive = "keepalive",
+  protocols = "list", headers = "headers", timeout = "seconds", heartbeat = "heartbeat",
   tls = { ca = "string" },
   limits = { message = "size", buffer = "size" },
 }
@@ -60,7 +60,7 @@ function Socket.connect(url, options)
   local protocols = o.protocols and table.concat(o.protocols, "\n")
   local limits = o.limits or {}
   local id, err = core.connect(loop.hub, url, protocols, o.headers, tls.ca, o.timeout,
-    limits.message, limits.buffer, o.keepalive)
+    limits.message, limits.buffer, o.heartbeat)
   if not id then
     error(err, 2)
   end

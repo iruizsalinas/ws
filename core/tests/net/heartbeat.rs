@@ -1,4 +1,4 @@
-//! Keepalive: quiet peers are pinged, silent ones dropped, live ones kept.
+//! Heartbeat: quiet peers are pinged, silent ones dropped, live ones kept.
 
 use super::common::*;
 use std::time::{Duration, Instant};
@@ -7,14 +7,14 @@ use ws_core::*;
 
 const IV: Duration = Duration::from_millis(200);
 
-fn server(hub: &Hub, keepalive: Option<Duration>) -> Server {
-    hub.listen(ServerOptions { host: "127.0.0.1".into(), keepalive, ..Default::default() }).unwrap()
+fn server(hub: &Hub, heartbeat: Option<Duration>) -> Server {
+    hub.listen(ServerOptions { host: "127.0.0.1".into(), heartbeat, ..Default::default() }).unwrap()
 }
 
-/// The error and close events of a connection dropped by keepalive.
+/// The error and close events of a connection dropped by the heartbeat.
 fn expect_dropped(hub: &Hub, conn: &Conn) {
     match next(hub, &accept) {
-        Event::Error { id, error } => assert_eq!((id, error.as_str()), (conn.id(), "keepalive timed out")),
+        Event::Error { id, error } => assert_eq!((id, error.as_str()), (conn.id(), "heartbeat timed out")),
         e => panic!("unexpected {}", describe(&e)),
     }
     assert!(matches!(next(hub, &accept), Event::Close { code: 1006, .. }));
@@ -28,7 +28,7 @@ fn silent_peer_is_pinged_then_dropped() {
     let (mut raw, conn) = Raw::open(&server, &hub);
     let start = Instant::now();
     let (op, token) = raw.frame();
-    assert_eq!((op, token.len()), (PING, 8), "a keepalive ping carries an 8-byte token");
+    assert_eq!((op, token.len()), (PING, 8), "a heartbeat ping carries an 8-byte token");
     assert!(start.elapsed() >= IV / 2, "pinged before the peer was quiet: {:?}", start.elapsed());
     // Never answer it.
     let pinged = Instant::now();
@@ -40,7 +40,7 @@ fn silent_peer_is_pinged_then_dropped() {
         Ok(_) => true,
         Err(e) => matches!(e.kind(), std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::ConnectionAborted),
     };
-    assert!(gone, "socket still open after a keepalive drop");
+    assert!(gone, "socket still open after a heartbeat drop");
 }
 
 #[test]
@@ -82,7 +82,7 @@ fn inbound_traffic_defers_pings() {
 }
 
 #[test]
-fn disabled_keepalive_never_pings() {
+fn disabled_heartbeat_never_pings() {
     let hub = Hub::default();
     let server = server(&hub, None);
     let (mut raw, conn) = Raw::open(&server, &hub);
@@ -118,10 +118,10 @@ fn our_own_sends_do_not_keep_a_silent_peer_alive() {
 }
 
 #[test]
-fn client_keepalive_pings_and_hides_its_pongs() {
+fn client_heartbeat_pings_and_hides_its_pongs() {
     let hub = Hub::default();
     let server = server(&hub, None);
-    let (client, peer) = pair(&hub, &server, ClientOptions { keepalive: Some(IV), ..Default::default() });
+    let (client, peer) = pair(&hub, &server, ClientOptions { heartbeat: Some(IV), ..Default::default() });
     let mut pings = 0;
     while pings < 2 {
         match next(&hub, &accept) {

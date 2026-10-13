@@ -1,12 +1,12 @@
 //! Servers and upgrade decisions.
 
 use crate::ffi::{FATAL, OK, SOFT, WsStr, fail, registry};
-use crate::hub::{hub, keepalive_from, size};
+use crate::hub::{heartbeat_from, hub, size};
 use std::ffi::c_int;
 use ws_core::{Reply, ServerOptions, tls};
 
 /// Binds a server; zero limits keep the defaults (unlimited connections),
-/// and `keepalive` follows `keepalive_from`.
+/// and `heartbeat` follows `heartbeat_from`.
 /// Certificate problems are fatal; bind errors are not.
 #[unsafe(no_mangle)]
 pub extern "C" fn ws_listen(
@@ -18,7 +18,7 @@ pub extern "C" fn ws_listen(
     max: u64,
     buffer: u64,
     connections: u64,
-    keepalive: f64,
+    heartbeat: f64,
     id: &mut u64,
 ) -> c_int {
     let run = || -> Result<u64, c_int> {
@@ -33,7 +33,7 @@ pub extern "C" fn ws_listen(
         }
         opts.max_message = size(max, opts.max_message);
         opts.max_buffer = size(buffer, opts.max_buffer);
-        opts.keepalive = keepalive_from(keepalive, opts.keepalive);
+        opts.heartbeat = heartbeat_from(heartbeat, opts.heartbeat);
         opts.tls = match (cert.text("tls.cert")?, key.text("tls.key")?) {
             (Some(cert), Some(key)) => Some(tls::server(cert, key).map_err(|e| fail(FATAL, &e))?),
             (None, None) => None,

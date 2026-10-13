@@ -1,6 +1,6 @@
 //! Startup and the reader thread.
 
-use super::alive::Alive;
+use super::heartbeat::Alive;
 use super::send::{Item, seal};
 use super::{Io, Link, State};
 use crate::proto::reader::Reader;
@@ -80,7 +80,7 @@ impl Link {
                 Ok(n) => n,
                 // Nothing to read: the only point where silence is measured.
                 Err(e) if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {
-                    if !self.keepalive(&mut alive) {
+                    if !self.heartbeat(&mut alive) {
                         break;
                     }
                     continue;

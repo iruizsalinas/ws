@@ -30,9 +30,9 @@ fn lines(s: WsStr, what: &str) -> Result<Vec<String>, c_int> {
     Ok(s.text(what)?.unwrap_or("").lines().map(str::to_string).collect())
 }
 
-/// Keepalive seconds from C: negative keeps `default`, zero disables.
+/// Heartbeat seconds from C: negative keeps `default`, zero disables.
 /// ws.c rejects NaN, infinities and values above a million seconds.
-pub(crate) fn keepalive_from(seconds: f64, default: Option<Duration>) -> Option<Duration> {
+pub(crate) fn heartbeat_from(seconds: f64, default: Option<Duration>) -> Option<Duration> {
     if seconds < 0.0 {
         default
     } else if seconds == 0.0 {
@@ -59,7 +59,7 @@ pub extern "C" fn ws_connect(
     timeout: f64,
     max: u64,
     buffer: u64,
-    keepalive: f64,
+    heartbeat: f64,
     id: &mut u64,
 ) -> c_int {
     let run = || -> Result<u64, c_int> {
@@ -78,7 +78,7 @@ pub extern "C" fn ws_connect(
         }
         opts.max_message = size(max, opts.max_message);
         opts.max_buffer = size(buffer, opts.max_buffer);
-        opts.keepalive = keepalive_from(keepalive, opts.keepalive);
+        opts.heartbeat = heartbeat_from(heartbeat, opts.heartbeat);
         let conn = hub.connect(url, opts).map_err(|e| fail(FATAL, &e))?;
         let conn_id = conn.id();
         registry().conns.insert(conn_id, conn);

@@ -103,7 +103,7 @@ ws.run()
 | `protocols` | `nil` | Subprotocol or list of subprotocols |
 | `headers` | `nil` | Extra request headers |
 | `timeout` | `10` | Connection timeout in seconds |
-| `keepalive` | `30` | Seconds of silence before a ping; the connection closes if the peer stays silent as long again. `false` disables |
+| `heartbeat` | `30` | Seconds of silence before a ping; the connection closes if the peer stays silent as long again. `false` disables |
 | `tls.ca` | `nil` | Trusted certificates for `wss://`, as a PEM file path or PEM text; Mozilla's roots by default |
 | `limits.message` | `1048576` | Maximum message size in bytes (1 MiB) |
 | `limits.buffer` | `16777216` | Maximum unsent bytes (16 MiB); a `send` that does not fit returns `nil, "send buffer is full"` and `drain` fires once it would. A larger message is accepted only when nothing else is waiting |
@@ -116,7 +116,7 @@ ws.run()
 | `host` | `"0.0.0.0"` | Bind address |
 | `protocols` | `nil` | Supported subprotocols |
 | `accept` | `nil` | `function(req)` returning `true` to accept, or `false, status` to reject |
-| `keepalive` | `30` | Seconds of silence before a ping; the connection closes if the peer stays silent as long again. `false` disables |
+| `heartbeat` | `30` | Seconds of silence before a ping; the connection closes if the peer stays silent as long again. `false` disables |
 | `tls.cert` | `nil` | Certificate chain to serve `wss://`, as a PEM file path or PEM text |
 | `tls.key` | `nil` | Its private key, as a PEM file path or PEM text |
 | `limits.message` | `1048576` | Maximum message size in bytes (1 MiB) |

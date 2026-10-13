@@ -1,15 +1,15 @@
--- Keepalive between two of our own endpoints. Dropping silent peers needs a
+-- Heartbeat between two of our own endpoints. Dropping silent peers needs a
 -- peer that never answers, which only the Rust tests can build.
 local H = require("tests.helper")
 local ws = require("ws")
 
-H.test("keepalive pings a quiet peer and hides the answers", function()
-  local server = H.server({ keepalive = false })
+H.test("heartbeat pings a quiet peer and hides the answers", function()
+  local server = H.server({ heartbeat = false })
   local pings, pongs, state = 0, 0, nil
   server:on("connection", function(s)
     s:on("ping", function() pings = pings + 1 end)
   end)
-  local c = ws.connect(H.url(server), { keepalive = 0.1 })
+  local c = ws.connect(H.url(server), { heartbeat = 0.1 })
   c:on("pong", function() pongs = pongs + 1 end)
   c:on("open", function()
     ws.after(0.8, function()
@@ -19,7 +19,7 @@ H.test("keepalive pings a quiet peer and hides the answers", function()
   end)
   c:on("close", function() server:close() end)
   H.run()
-  assert(pings >= 3, "keepalive pings seen by the server: " .. pings)
-  H.eq(pongs, 0, "keepalive pongs reported to the client")
-  H.eq(state, "open", "state after several keepalive rounds")
+  assert(pings >= 3, "heartbeat pings seen by the server: " .. pings)
+  H.eq(pongs, 0, "heartbeat pongs reported to the client")
+  H.eq(state, "open", "state after several heartbeat rounds")
 end)

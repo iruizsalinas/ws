@@ -1,4 +1,4 @@
-//! Keepalive: pings a quiet peer and drops one that stays silent.
+//! Heartbeat: pings a quiet peer and drops one that stays silent.
 //!
 //! Signs of life are inbound bytes and writes the peer acknowledged. Checks
 //! run only after a read found nothing to read, so an application that is
@@ -47,13 +47,13 @@ impl Alive {
 impl Link {
     /// How long the reader may block, so checks keep up with the interval.
     pub(super) fn tick(&self) -> Duration {
-        self.keepalive.map_or(crate::TICK, |k| (k / 4).clamp(Duration::from_millis(10), crate::TICK))
+        self.heartbeat.map_or(crate::TICK, |k| (k / 4).clamp(Duration::from_millis(10), crate::TICK))
     }
 
     /// Runs after a read timed out; `false` once the peer was dropped.
-    pub(super) fn keepalive(&self, alive: &mut Alive) -> bool {
+    pub(super) fn heartbeat(&self, alive: &mut Alive) -> bool {
         // Closing has its own deadline.
-        let Some(interval) = self.keepalive.filter(|_| self.state() == State::Open) else {
+        let Some(interval) = self.heartbeat.filter(|_| self.state() == State::Open) else {
             return true;
         };
         let now = Instant::now();
@@ -68,18 +68,18 @@ impl Link {
                 true
             }
             Action::Dead => {
-                self.fail("keepalive timed out");
+                self.fail("heartbeat timed out");
                 false
             }
         }
     }
 
-    /// Whether `data` answers one of our keepalive pings.
+    /// Whether `data` answers one of our heartbeat pings.
     pub(super) fn ours(&self, data: &[u8]) -> bool {
         data == self.token
     }
 }
 
 #[cfg(test)]
-#[path = "../../../tests/unit/alive.rs"]
+#[path = "../../../tests/unit/heartbeat.rs"]
 mod tests;

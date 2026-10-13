@@ -30,8 +30,8 @@ pub type Id = u64;
 pub const MAX_MESSAGE: usize = 1 << 20;
 /// Default limit for unsent data per connection, in bytes.
 pub const MAX_BUFFER: usize = 16 << 20;
-/// Default silence before a keepalive ping; as much again without a reply drops the peer.
-pub const KEEPALIVE: Duration = Duration::from_secs(30);
+/// Default silence before a heartbeat ping; as much again without a reply drops the peer.
+pub const HEARTBEAT: Duration = Duration::from_secs(30);
 /// How often blocked readers wake to notice closes and deadlines.
 pub(crate) const TICK: Duration = Duration::from_secs(1);
 

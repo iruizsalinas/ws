@@ -3,9 +3,9 @@
 //! Lock order is `flags` -> `tls` -> `queue`. TLS records are sealed while
 //! `tls` is held and queued before it is released, so they stay in order.
 
-mod alive;
 mod close;
 mod handle;
+mod heartbeat;
 mod read;
 mod send;
 mod write;
@@ -31,14 +31,14 @@ pub(crate) struct Config {
     /// Stop accepting application frames while the writer is this far behind.
     pub buffer: usize,
     /// Ping after this much silence; drop the peer after as much again.
-    pub keepalive: Option<Duration>,
+    pub heartbeat: Option<Duration>,
 }
 
 #[cfg(test)]
 impl Config {
-    /// Defaults with keepalive off, for tests that drive a link by hand.
+    /// Defaults with heartbeat off, for tests that drive a link by hand.
     pub fn test(message: usize) -> Self {
-        Config { message, buffer: crate::MAX_BUFFER, keepalive: None }
+        Config { message, buffer: crate::MAX_BUFFER, heartbeat: None }
     }
 }
 
@@ -70,8 +70,8 @@ pub(crate) struct Link {
     server: bool,
     max: usize,
     buffer: usize,
-    keepalive: Option<Duration>,
-    /// Payload of keepalive pings, so their pongs are not reported.
+    heartbeat: Option<Duration>,
+    /// Payload of heartbeat pings, so their pongs are not reported.
     token: [u8; 8],
     events: Events,
     flags: Mutex<Flags>,
@@ -97,7 +97,7 @@ impl Link {
             server,
             max: config.message,
             buffer: config.buffer,
-            keepalive: config.keepalive,
+            heartbeat: config.heartbeat,
             token: crate::random(),
             events,
             flags: Mutex::new(flags),

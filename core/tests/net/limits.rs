@@ -56,7 +56,7 @@ fn admission_limit_includes_open_connections_and_recovers_after_close() {
 #[test]
 fn drain_follows_a_refused_send_once_there_is_room() {
     let hub = Hub::default();
-    let opts = ServerOptions { host: "127.0.0.1".into(), max_buffer: 1, keepalive: None, ..Default::default() };
+    let opts = ServerOptions { host: "127.0.0.1".into(), max_buffer: 1, heartbeat: None, ..Default::default() };
     let server = hub.listen(opts).unwrap();
     let (mut raw, conn) = Raw::open(&server, &hub);
     let big = vec![7u8; 32 << 20];

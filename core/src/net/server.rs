@@ -3,7 +3,7 @@
 use super::link::Config;
 use super::serve::serve;
 use crate::queue::{Events, Permit};
-use crate::{Id, KEEPALIVE, MAX_BUFFER, MAX_MESSAGE, lock};
+use crate::{HEARTBEAT, Id, MAX_BUFFER, MAX_MESSAGE, lock};
 use rustls::ServerConfig;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::Relaxed};
@@ -20,8 +20,8 @@ pub struct Options {
     pub tls: Option<Arc<ServerConfig>>,
     pub max_message: usize,
     pub max_buffer: usize,
-    /// Silence before a ping; `None` disables keepalive.
-    pub keepalive: Option<Duration>,
+    /// Silence before a ping; `None` disables heartbeats.
+    pub heartbeat: Option<Duration>,
     /// Includes handshakes, live connections and undrained connection events.
     /// Unlimited (`usize::MAX`) by default.
     pub max_connections: usize,
@@ -35,7 +35,7 @@ impl Default for Options {
             tls: None,
             max_message: MAX_MESSAGE,
             max_buffer: MAX_BUFFER,
-            keepalive: Some(KEEPALIVE),
+            heartbeat: Some(HEARTBEAT),
             max_connections: usize::MAX,
         }
     }
@@ -98,8 +98,8 @@ pub(crate) fn listen(events: Events, id: Id, opts: Options) -> std::io::Result<S
     if opts.max_message == 0 || opts.max_buffer == 0 || opts.max_connections == 0 {
         return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "limits must be positive"));
     }
-    if opts.keepalive.is_some_and(|k| k.is_zero()) {
-        return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "keepalive must be positive"));
+    if opts.heartbeat.is_some_and(|k| k.is_zero()) {
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "heartbeat must be positive"));
     }
     let listener = TcpListener::bind((opts.host.as_str(), opts.port))?;
     let addr = listener.local_addr()?;
@@ -108,7 +108,7 @@ pub(crate) fn listen(events: Events, id: Id, opts: Options) -> std::io::Result<S
         id,
         events,
         tls: opts.tls,
-        config: Config { message: opts.max_message, buffer: opts.max_buffer, keepalive: opts.keepalive },
+        config: Config { message: opts.max_message, buffer: opts.max_buffer, heartbeat: opts.heartbeat },
         pending: AtomicUsize::new(0),
         stop: stop.clone(),
         connections: Arc::default(),

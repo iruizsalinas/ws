@@ -40,14 +40,14 @@ static uint64_t opt_size(lua_State *L, int i) {
 }
 
 /* nil keeps the default (-1), false disables (0), else positive seconds. */
-static double opt_keepalive(lua_State *L, int i) {
+static double opt_heartbeat(lua_State *L, int i) {
     if (lua_isnoneornil(L, i)) return -1;
     if (lua_isboolean(L, i)) {
-        luaL_argcheck(L, !lua_toboolean(L, i), i, "invalid keepalive");
+        luaL_argcheck(L, !lua_toboolean(L, i), i, "invalid heartbeat");
         return 0;
     }
     lua_Number n = luaL_checknumber(L, i);
-    luaL_argcheck(L, n > 0 && n <= 1e6, i, "invalid keepalive");
+    luaL_argcheck(L, n > 0 && n <= 1e6, i, "invalid heartbeat");
     return n;
 }
 
@@ -102,7 +102,7 @@ static int l_wait(lua_State *L) {
 static int l_connect(lua_State *L) {
     uint64_t id = 0;
     int rc = ws_connect(check_id(L, 1), opt_str(L, 2), opt_str(L, 3), opt_str(L, 4), opt_str(L, 5),
-                        luaL_optnumber(L, 6, 0), opt_size(L, 7), opt_size(L, 8), opt_keepalive(L, 9), &id);
+                        luaL_optnumber(L, 6, 0), opt_size(L, 7), opt_size(L, 8), opt_heartbeat(L, 9), &id);
     return handle(L, rc, id);
 }
 
@@ -111,7 +111,7 @@ static int l_listen(lua_State *L) {
     lua_Integer port = luaL_checkinteger(L, 3);
     luaL_argcheck(L, port >= 0 && port <= 65535, 3, "invalid port");
     int rc = ws_listen(check_id(L, 1), opt_str(L, 2), (uint16_t)port, opt_str(L, 4), opt_str(L, 5),
-                       opt_size(L, 6), opt_size(L, 7), opt_size(L, 8), opt_keepalive(L, 9), &id);
+                       opt_size(L, 6), opt_size(L, 7), opt_size(L, 8), opt_heartbeat(L, 9), &id);
     return handle(L, rc, id);
 }
 

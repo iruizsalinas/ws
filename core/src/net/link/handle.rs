@@ -64,7 +64,7 @@ impl Link {
                 drop(f);
                 self.deliver(data.len(), Event::Ping { id, data });
             }
-            // Answers to keepalive pings are internal.
+            // Answers to heartbeat pings are internal.
             Msg::Pong(data) if self.ours(&data) => {}
             Msg::Pong(data) => self.deliver(data.len(), Event::Pong { id, data }),
             Msg::Close(status) => self.closing(status),

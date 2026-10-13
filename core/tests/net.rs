@@ -6,8 +6,8 @@ mod basic;
 mod common;
 #[path = "net/connect.rs"]
 mod connect;
-#[path = "net/keepalive.rs"]
-mod keepalive;
+#[path = "net/heartbeat.rs"]
+mod heartbeat;
 #[path = "net/limits.rs"]
 mod limits;
 #[path = "net/raw.rs"]

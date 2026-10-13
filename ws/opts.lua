@@ -20,7 +20,7 @@ local kinds = {
     return nil, "a positive number of seconds"
   end,
   -- Seconds, or false to turn the feature off.
-  keepalive = function(v)
+  heartbeat = function(v)
     if v == false or (type(v) == "number" and v > 0 and v <= 1e6) then return v end
     return nil, "a positive number of seconds or false"
   end,
