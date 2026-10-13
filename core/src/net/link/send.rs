@@ -13,12 +13,16 @@ pub(super) enum Item {
     Shutdown,
 }
 
+/// Writes smaller than this join the previous one, so tiny frames cost
+/// their bytes rather than a queue entry and an allocation each.
+const JOIN: usize = 16 * 1024;
+
 #[derive(Default)]
 pub(super) struct Queue {
     pub(super) items: VecDeque<Item>,
     pub(super) done: bool,
-    /// A send was refused for a full buffer; report when there is room.
-    pub(super) drain: bool,
+    /// Size of a send refused for a full buffer; reported once it fits.
+    pub(super) drain: Option<usize>,
 }
 
 impl Link {
@@ -28,20 +32,27 @@ impl Link {
         if f.state != State::Open || f.sent_close {
             return Err(if f.state == State::Connecting { "not open yet" } else { "closed" });
         }
-        // Checked under flags, which serializes application sends. A single
-        // large frame is allowed to cross the threshold; subsequent sends
-        // must wait for the writer, including its currently in-flight batch.
-        if self.buffered.load(Relaxed) >= self.buffer {
+        // Checked under flags, which serializes application sends, and
+        // before the frame is built. The writer's in-flight batch counts.
+        let len = frame::encoded_len(payload.len(), !self.server);
+        if !self.fits(len) {
             // Rechecked under the queue lock the writer reports progress
             // under, so it either sees the request or has already made room.
             let mut q = lock(&self.queue);
-            if self.buffered.load(Relaxed) >= self.buffer {
-                q.drain = true;
+            if !self.fits(len) {
+                q.drain = Some(len);
                 return Err("send buffer is full");
             }
         }
         self.push(self.frame(op, payload));
         Ok(())
+    }
+
+    /// Whether a frame of `len` bytes may be queued now: it must fit in the
+    /// room left, so a larger one is only taken once nothing is waiting.
+    pub(super) fn fits(&self, len: usize) -> bool {
+        let buffered = self.buffered.load(Relaxed);
+        buffered == 0 || buffered.saturating_add(len) <= self.buffer
     }
 
     pub(super) fn frame(&self, op: u8, payload: &[u8]) -> Vec<u8> {
@@ -78,13 +89,17 @@ impl Link {
         if q.done {
             return;
         }
-        if let Item::Data(d) = &item {
-            if d.is_empty() {
-                return;
+        match item {
+            Item::Data(d) if d.is_empty() => return,
+            Item::Data(d) => {
+                self.buffered.fetch_add(d.len(), Relaxed);
+                match q.items.back_mut() {
+                    Some(Item::Data(last)) if d.len() < JOIN && last.len() < JOIN => last.extend_from_slice(&d),
+                    _ => q.items.push_back(Item::Data(d)),
+                }
             }
-            self.buffered.fetch_add(d.len(), Relaxed);
+            Item::Shutdown => q.items.push_back(Item::Shutdown),
         }
-        q.items.push_back(item);
         drop(q);
         self.ready.notify_one();
     }

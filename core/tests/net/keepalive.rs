@@ -97,9 +97,8 @@ fn a_stalled_backlog_does_not_hide_a_dead_peer() {
     let server = server(&hub, Some(IV));
     // The raw peer never reads, so the writer blocks once the kernel is full.
     let (_raw, conn) = Raw::open(&server, &hub);
-    let data = vec![7u8; 8 << 20];
-    conn.send(&data, true).unwrap();
-    let _ = conn.send(&data, true);
+    // Larger than the buffer, so it goes alone, and more than kernels hold.
+    conn.send(&vec![7u8; 32 << 20], true).unwrap();
     expect_dropped(&hub, &conn);
     assert_eq!(conn.buffered(), 0);
 }

@@ -1,4 +1,6 @@
-use ws_core::proto::frame::{BINARY, CLOSE, CONTINUATION, Fail, Msg, PING, TEXT, apply_mask, close_payload, encode};
+use ws_core::proto::frame::{
+    BINARY, CLOSE, CONTINUATION, Fail, Msg, PING, TEXT, apply_mask, close_payload, encode, encoded_len,
+};
 use ws_core::proto::reader::Reader;
 
 const KEY: [u8; 4] = [1, 2, 3, 4];
@@ -27,6 +29,15 @@ fn roundtrip_lengths() {
         let data: Vec<u8> = (0..len).map(|i| i as u8).collect();
         assert_eq!(read(true, &encode(BINARY, &data, Some(KEY))).unwrap(), [Msg::Binary(data.clone())]);
         assert_eq!(read(false, &encode(BINARY, &data, None)).unwrap(), [Msg::Binary(data)]);
+    }
+}
+
+#[test]
+fn encoded_len_matches_encode() {
+    for len in [0, 1, 125, 126, 127, 65535, 65536, 100_000] {
+        let data = vec![0; len];
+        assert_eq!(encoded_len(len, true), encode(BINARY, &data, Some(KEY)).len(), "masked {len}");
+        assert_eq!(encoded_len(len, false), encode(BINARY, &data, None).len(), "unmasked {len}");
     }
 }
 

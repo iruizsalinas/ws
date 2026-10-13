@@ -70,8 +70,10 @@ impl Link {
                 self.acked.store(ms, Relaxed);
             }
             self.drained.notify_all();
-            let drain = q.drain && left < self.buffer;
-            q.drain &= !drain;
+            let drain = q.drain.is_some_and(|len| left == 0 || left.saturating_add(len) <= self.buffer);
+            if drain {
+                q.drain = None;
+            }
             drain
         };
         // Emitting takes `flags`, which must not be taken under `queue`.

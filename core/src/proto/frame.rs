@@ -7,9 +7,19 @@ pub const PING: u8 = 0x9;
 pub const PONG: u8 = 0xA;
 pub const CONTINUATION: u8 = 0x0;
 
+/// Size of an encoded frame carrying `len` payload bytes.
+pub fn encoded_len(len: usize, masked: bool) -> usize {
+    let extended = match len {
+        0..=125 => 0,
+        126..=0xFFFF => 2,
+        _ => 8,
+    };
+    len.saturating_add(2 + extended + if masked { 4 } else { 0 })
+}
+
 pub fn encode(op: u8, payload: &[u8], mask: Option<[u8; 4]>) -> Vec<u8> {
     let len = payload.len();
-    let mut out = Vec::with_capacity(len + 14);
+    let mut out = Vec::with_capacity(encoded_len(len, mask.is_some()));
     out.push(0x80 | op);
     let bit = if mask.is_some() { 0x80 } else { 0 };
     match len {

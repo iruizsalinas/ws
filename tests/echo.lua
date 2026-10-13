@@ -38,7 +38,8 @@ end)
 H.test("a full send buffer refuses sends, then drain says when to resume", function()
   -- The server cannot read while the open handler keeps sending.
   local server = H.server({ limits = { message = 1024 * 1024 } })
-  local chunk = string.rep("x", 256 * 1024)
+  -- Four frames fit: each adds 14 header bytes to its payload.
+  local chunk = string.rep("x", 256 * 1024 - 16)
   local c = ws.connect(H.url(server), { limits = { buffer = 1024 * 1024 } })
   local accepted, err, drains, resumed, last = 0, nil, 0, nil, nil
   server:on("connection", function(s)

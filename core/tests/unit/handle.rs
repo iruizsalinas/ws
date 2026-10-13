@@ -1,4 +1,5 @@
 // Lifecycle checks that need private Link state.
+use super::super::send::Item;
 use super::*;
 use crate::net::link::Config;
 use std::sync::mpsc::channel;
@@ -45,9 +46,38 @@ fn sends_apply_backpressure_to_a_stalled_writer() {
     assert_eq!(link.send(frame::TEXT, b"more"), Err("send buffer is full"));
     assert_eq!(link.send(frame::PING, b"more"), Err("send buffer is full"));
     assert_eq!(link.state(), super::super::State::Open);
-    // Below the configured limit, a frame is accepted even if it crosses it.
-    link.buffered.store(63, Relaxed);
+    // A frame must fit in the room left: 10 + 52 + 2 header bytes is 64.
+    link.buffered.store(10, Relaxed);
+    assert_eq!(link.send(frame::BINARY, &[0; 52]), Ok(()));
+    assert_eq!(link.send(frame::BINARY, &[0; 53]), Err("send buffer is full"));
+    // One larger than the whole buffer goes only when nothing is waiting.
+    link.buffered.store(1, Relaxed);
+    assert_eq!(link.send(frame::BINARY, &[0; 100]), Err("send buffer is full"));
+    link.buffered.store(0, Relaxed);
     assert_eq!(link.send(frame::BINARY, &[0; 100]), Ok(()));
+}
+
+#[test]
+fn small_writes_share_queue_entries() {
+    let (tx, _rx) = channel();
+    let link = Link::new(1, true, Config::test(1024), tx.into());
+    // Empty pongs, as a peer that pings but never reads would cause.
+    for _ in 0..10_000 {
+        link.enqueue(Item::Data(frame::encode(frame::PONG, &[], None)));
+    }
+    let big = vec![0; 64 * 1024];
+    link.enqueue(Item::Data(big.clone()));
+    link.enqueue(Item::Data(vec![1]));
+    link.enqueue(Item::Shutdown);
+    link.enqueue(Item::Data(vec![2]));
+    let q = lock(&link.queue);
+    let sizes: Vec<usize> = q.items.iter().map(|i| if let Item::Data(d) = i { d.len() } else { 0 }).collect();
+    // 20,000 bytes: one entry fills up to 16 KiB, the next takes the rest.
+    assert_eq!(sizes, [16 * 1024, 20_000 - 16 * 1024, big.len(), 1, 0, 1]);
+    assert_eq!(link.buffered.load(Relaxed), 20_000 + big.len() + 2);
+    // Order is kept: the bytes are the frames back to back.
+    let Item::Data(first) = &q.items[0] else { panic!("expected data") };
+    assert!(first.chunks(2).all(|c| c == [0x8A, 0]));
 }
 
 #[test]
@@ -67,4 +97,11 @@ fn drain_is_reported_once_a_refused_send_would_fit() {
     link.buffered.store(100, Relaxed);
     link.progress(100);
     assert!(rx.try_recv().is_err());
+    // A frame larger than the buffer fits once nothing is left.
+    link.buffered.store(10, Relaxed);
+    assert_eq!(link.send(frame::BINARY, &[0; 100]), Err("send buffer is full"));
+    link.progress(9);
+    assert!(rx.try_recv().is_err(), "1 byte left and 102 more would not fit");
+    link.progress(1);
+    assert!(matches!(rx.try_recv().map(|q| q.event), Ok(Event::Drain { id: 1 })));
 }

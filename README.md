@@ -106,7 +106,7 @@ ws.run()
 | `keepalive` | `30` | Seconds of silence before a ping; the connection closes if the peer stays silent as long again. `false` disables |
 | `tls.ca` | `nil` | Trusted certificates for `wss://`, as a PEM file path or PEM text; Mozilla's roots by default |
 | `limits.message` | `1048576` | Maximum message size in bytes (1 MiB) |
-| `limits.buffer` | `16777216` | Unsent bytes allowed before `send` returns `nil, "send buffer is full"` (16 MiB); `drain` fires when there is room again |
+| `limits.buffer` | `16777216` | Maximum unsent bytes (16 MiB); a `send` that does not fit returns `nil, "send buffer is full"` and `drain` fires once it would. A larger message is accepted only when nothing else is waiting |
 
 ### Server Options
 
@@ -120,5 +120,5 @@ ws.run()
 | `tls.cert` | `nil` | Certificate chain to serve `wss://`, as a PEM file path or PEM text |
 | `tls.key` | `nil` | Its private key, as a PEM file path or PEM text |
 | `limits.message` | `1048576` | Maximum message size in bytes (1 MiB) |
-| `limits.buffer` | `16777216` | Unsent bytes allowed before `send` returns `nil, "send buffer is full"` (16 MiB); `drain` fires when there is room again |
+| `limits.buffer` | `16777216` | Maximum unsent bytes (16 MiB); a `send` that does not fit returns `nil, "send buffer is full"` and `drain` fires once it would. A larger message is accepted only when nothing else is waiting |
 | `limits.connections` | `nil` | Maximum concurrent connections; extra ones are dropped (unlimited by default) |
