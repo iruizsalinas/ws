@@ -1,12 +1,12 @@
 //! Listening sockets and the server side of the handshake.
 
 use super::serve::serve;
-use crate::{Event, Id, MAX_PAYLOAD};
+use crate::{Event, Id, MAX_PAYLOAD, lock};
 use rustls::ServerConfig;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener, TcpStream};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::Relaxed};
-use std::sync::mpsc::Sender;
+use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 /// Connections still handshaking; more are dropped on accept.
@@ -29,6 +29,8 @@ pub struct Server {
     id: Id,
     addr: SocketAddr,
     stop: Arc<AtomicBool>,
+    /// Disconnects once the accept thread has dropped the listener.
+    released: Mutex<Option<Receiver<()>>>,
 }
 
 pub(super) struct Shared {
@@ -48,7 +50,7 @@ impl Server {
         self.addr
     }
 
-    /// Stops accepting; live connections are unaffected.
+    /// Stops accepting and releases the port; live connections are unaffected.
     pub fn close(&self) {
         if self.stop.swap(true, Relaxed) {
             return;
@@ -60,6 +62,10 @@ impl Server {
             ip => ip,
         };
         let _ = TcpStream::connect_timeout(&SocketAddr::new(ip, self.addr.port()), Duration::from_secs(1));
+        // Wait for the port to be free, so a new connection is refused, not reset.
+        if let Some(released) = lock(&self.released).take() {
+            let _ = released.recv_timeout(Duration::from_secs(1));
+        }
     }
 }
 
@@ -75,8 +81,12 @@ pub(crate) fn listen(events: Sender<Event>, id: Id, opts: Options) -> std::io::R
     let stop = Arc::new(AtomicBool::new(false));
     let shared = Arc::new(Shared { id, events, tls: opts.tls, max: opts.max_payload, pending: AtomicUsize::new(0) });
     let flag = stop.clone();
-    std::thread::Builder::new().name("ws-accept".into()).spawn(move || accept(listener, shared, flag))?;
-    Ok(Server { id, addr, stop })
+    let (done, released) = channel();
+    std::thread::Builder::new().name("ws-accept".into()).spawn(move || {
+        accept(listener, shared, flag);
+        drop(done);
+    })?;
+    Ok(Server { id, addr, stop, released: Mutex::new(Some(released)) })
 }
 
 fn accept(listener: TcpListener, shared: Arc<Shared>, stop: Arc<AtomicBool>) {

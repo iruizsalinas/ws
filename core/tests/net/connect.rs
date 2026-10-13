@@ -71,13 +71,13 @@ fn invalid_arguments() {
 
 #[test]
 fn server_close_stops_accepting() {
-    let hub = Hub::default();
-    let server = listen(&hub);
-    let addr = server.addr();
-    server.close();
-    let deadline = Instant::now() + WAIT;
-    while TcpStream::connect(addr).is_ok() {
-        assert!(Instant::now() < deadline, "listener still accepting");
-        std::thread::sleep(Duration::from_millis(20));
+    // close() returns only once the port is released, so nothing lands in a
+    // dying listener's backlog (which the peer would see as a reset).
+    for _ in 0..10 {
+        let hub = Hub::default();
+        let server = listen(&hub);
+        let addr = server.addr();
+        server.close();
+        assert!(TcpStream::connect_timeout(&addr, Duration::from_millis(200)).is_err(), "listener still accepting");
     }
 }
