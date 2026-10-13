@@ -4,6 +4,7 @@ use super::{CLOSE_TIMEOUT, Link, State};
 use crate::proto::frame;
 use crate::{Event, lock};
 use std::net::Shutdown;
+use std::sync::atomic::Ordering::Relaxed;
 use std::time::Instant;
 
 impl Link {
@@ -57,5 +58,26 @@ impl Link {
             }
         };
         self.finish(code, reason);
+    }
+
+    /// EOF only closes the peer's sending direction. Give our close reply time
+    /// to leave the writer before finish() drops the queue and shuts down TCP.
+    pub(super) fn flush_close(&self) {
+        let deadline = {
+            let f = lock(&self.flags);
+            if f.received.is_none() && f.failed.is_none() {
+                return;
+            }
+            f.deadline
+        };
+        let Some(deadline) = deadline else { return };
+        let mut q = lock(&self.queue);
+        while !q.done && self.buffered.load(Relaxed) > 0 {
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                break;
+            }
+            q = self.drained.wait_timeout(q, left).unwrap_or_else(|e| e.into_inner()).0;
+        }
     }
 }

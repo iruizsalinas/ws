@@ -65,9 +65,10 @@ impl Link {
         loop {
             if ok && !plain.is_empty() {
                 reader.push(&plain);
-                plain.clear();
                 ok = self.dispatch(&mut reader);
             }
+            // Drain transport data without retaining it after close or failure.
+            plain.clear();
             if self.state() == State::Closed || self.expired() {
                 break;
             }
@@ -93,6 +94,7 @@ impl Link {
             reader.push(&plain);
             self.dispatch(&mut reader);
         }
+        self.flush_close();
         self.end();
     }
 
@@ -118,6 +120,9 @@ impl Link {
         let mut result = Ok(true);
         while result.is_ok() && !raw.is_empty() {
             result = match conn.read_tls(&mut raw) {
+                // rustls stops consuming input after close_notify. Drain its
+                // remaining plaintext below instead of retrying the same bytes.
+                Ok(0) => break,
                 Ok(_) => conn.process_new_packets().map(|_| true).map_err(|e| format!("TLS error: {e}")),
                 Err(e) => Err(e.to_string()),
             };
@@ -138,3 +143,7 @@ impl Link {
         result
     }
 }
+
+#[cfg(test)]
+#[path = "../../../tests/unit/read.rs"]
+mod tests;

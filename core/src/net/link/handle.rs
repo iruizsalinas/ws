@@ -11,12 +11,18 @@ use std::time::Instant;
 const PONG_LIMIT: usize = 1 << 20;
 
 impl Link {
-    /// Handles decoded messages; `false` after a protocol violation.
+    /// Handles decoded messages; `false` once no more frames may be processed.
     pub(super) fn dispatch(&self, reader: &mut Reader) -> bool {
         loop {
             match reader.message() {
                 Ok(None) => return true,
-                Ok(Some(msg)) => self.handle(msg),
+                Ok(Some(msg)) => {
+                    let closing = matches!(msg, Msg::Close(_));
+                    self.handle(msg);
+                    if closing || self.state() == super::State::Closed {
+                        return false;
+                    }
+                }
                 Err(fail) => {
                     self.violation(fail);
                     return false;
@@ -29,6 +35,9 @@ impl Link {
     fn violation(&self, Fail(code, why): Fail) {
         self.emit(Event::Error { id: self.id, error: why.to_string() });
         let mut f = lock(&self.flags);
+        if f.state == super::State::Closed {
+            return;
+        }
         f.failed = Some(code);
         f.state = super::State::Closing;
         f.deadline.get_or_insert(Instant::now() + CLOSE_TIMEOUT);
@@ -47,7 +56,7 @@ impl Link {
             Msg::Binary(data) => self.deliver(data.len(), Event::Message { id, data, binary: true }),
             Msg::Ping(data) => {
                 let f = lock(&self.flags);
-                if !f.sent_close && self.buffered.load(Relaxed) < PONG_LIMIT {
+                if f.state != super::State::Closed && f.received.is_none() && self.buffered.load(Relaxed) < PONG_LIMIT {
                     self.push(self.frame(frame::PONG, &data));
                 }
                 drop(f);
@@ -60,7 +69,7 @@ impl Link {
 
     fn closing(&self, status: Option<(u16, String)>) {
         let mut f = lock(&self.flags);
-        if f.received.is_some() {
+        if f.state == super::State::Closed || f.received.is_some() {
             return;
         }
         f.received = Some(status.clone().unwrap_or((1005, String::new())));
@@ -82,3 +91,7 @@ impl Link {
         self.emit(event);
     }
 }
+
+#[cfg(test)]
+#[path = "../../../tests/unit/handle.rs"]
+mod tests;

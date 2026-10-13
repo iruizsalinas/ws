@@ -36,6 +36,10 @@ fn valid_host(host: &str) -> bool {
     name_ok && (port.is_empty() || port.strip_prefix(':').is_some_and(digits))
 }
 
+fn valid_target(target: &str) -> bool {
+    target.starts_with('/') && !target.bytes().any(|b| b <= b' ' || b >= 0x7f || b == b'#')
+}
+
 /// Validates an upgrade request; `Err` is the HTTP status to reject with.
 pub fn request(head: &[u8]) -> Result<Request, u16> {
     let (start, headers) = parse(head).ok_or(400u16)?;
@@ -43,7 +47,7 @@ pub fn request(head: &[u8]) -> Result<Request, u16> {
     let [method, target, version] = parts[..] else {
         return Err(400);
     };
-    if version != "HTTP/1.1" || !target.starts_with('/') {
+    if version != "HTTP/1.1" || !valid_target(target) {
         return Err(400);
     }
     if method != "GET" {

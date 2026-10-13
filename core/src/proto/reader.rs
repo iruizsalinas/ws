@@ -58,12 +58,23 @@ impl Reader {
         if masked != self.server {
             return Err(Fail(1002, if self.server { "unmasked client frame" } else { "masked server frame" }));
         }
+        // Reject invalid sequencing before buffering an attacker-chosen payload.
+        if op < CLOSE {
+            match (op, self.partial.is_some()) {
+                (CONTINUATION, false) => return Err(Fail(1002, "unexpected continuation frame")),
+                (TEXT | BINARY, true) => return Err(Fail(1002, "expected continuation frame")),
+                _ => {}
+            }
+        }
         let (len, mut at) = match b[1] & 0x7F {
             126 if b.len() >= 4 => (u64::from(u16::from_be_bytes([b[2], b[3]])), 4),
             127 if b.len() >= 10 => (u64::from_be_bytes(b[2..10].try_into().unwrap_or_default()), 10),
             126 | 127 => return Ok(None),
             n => (u64::from(n), 2),
         };
+        if (at == 4 && len < 126) || (at == 10 && (len < 65536 || len >> 63 != 0)) {
+            return Err(Fail(1002, "invalid payload length encoding"));
+        }
         if op >= CLOSE {
             if !fin || len > 125 {
                 return Err(Fail(1002, "invalid control frame"));
@@ -84,7 +95,7 @@ impl Reader {
             None
         };
         let len = len as usize; // bounded by `max` or 125 above
-        if b.len() < at + len {
+        if len > b.len() - at {
             return Ok(None);
         }
         let mut payload = b[at..at + len].to_vec();

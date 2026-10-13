@@ -98,3 +98,72 @@ fn dropped_tcp_is_abnormal() {
     drop(raw);
     assert!(matches!(next(&hub, &accept), Event::Close { code: 1006, .. }));
 }
+
+#[test]
+fn invalid_upgrade_decisions_are_rejected() {
+    for decision in [
+        Reply::Accept(Some("chat\r\nX-Injected: yes".into())),
+        Reply::Accept(Some("unoffered".into())),
+        Reply::Accept(Some(String::new())),
+        Reply::Reject(101),
+    ] {
+        let hub = Hub::default();
+        let server = listen(&hub);
+        let mut raw = Raw::connect(&server);
+        raw.0.write_all(UPGRADE.as_bytes()).unwrap();
+        let Event::Request { reply, .. } = hub.recv(Some(WAIT)).unwrap() else { panic!("expected request") };
+        reply.send(decision).unwrap();
+        let head = raw.request("");
+        assert!(head.starts_with("HTTP/1.1 500 "), "{head}");
+        assert!(!head.contains("X-Injected"));
+    }
+}
+
+#[test]
+fn frames_after_close_are_ignored() {
+    let hub = Hub::default();
+    let server = listen(&hub);
+    let mut raw = Raw::upgrade(&server, &hub);
+    let mut bytes = frame::encode(CLOSE, &frame::close_payload(1000, "bye"), Some([1; 4]));
+    bytes.extend(frame::encode(PING, b"ignored", Some([1; 4])));
+    bytes.extend([0xff, 0xff]);
+    raw.0.write_all(&bytes).unwrap();
+    assert_eq!(raw.frame().0, CLOSE);
+    raw.eof();
+    drop(raw);
+    assert!(matches!(next(&hub, &accept), Event::Close { code: 1000, .. }));
+}
+
+#[test]
+fn ping_is_answered_while_waiting_for_peer_close() {
+    let hub = Hub::default();
+    let server = listen(&hub);
+    let mut raw = Raw::connect(&server);
+    raw.0.write_all(UPGRADE.as_bytes()).unwrap();
+    let Event::Connection { conn, .. } = next(&hub, &accept) else { panic!("expected connection") };
+    assert!(raw.request("").starts_with("HTTP/1.1 101 "));
+    conn.close(1000, "");
+    assert_eq!(raw.frame().0, CLOSE);
+    raw.send(PING, b"still here");
+    assert_eq!(raw.frame(), (PONG, b"still here".to_vec()));
+    raw.send(CLOSE, &frame::close_payload(1000, ""));
+    raw.eof();
+}
+
+#[test]
+fn peer_half_close_does_not_discard_close_reply() {
+    let hub = Hub::default();
+    let server = listen(&hub);
+    let mut raw = Raw::connect(&server);
+    raw.0.write_all(UPGRADE.as_bytes()).unwrap();
+    let Event::Connection { conn, .. } = next(&hub, &accept) else { panic!("expected connection") };
+    assert!(raw.request("").starts_with("HTTP/1.1 101 "));
+    // Hold the writer in a large frame while the reader handles Close and EOF.
+    let data = vec![7; 8 * 1024 * 1024];
+    conn.send(&data, true).unwrap();
+    raw.send(CLOSE, &frame::close_payload(1000, ""));
+    raw.0.shutdown(std::net::Shutdown::Write).unwrap();
+    assert_eq!(raw.frame(), (frame::BINARY, data));
+    assert_eq!(raw.frame(), (CLOSE, frame::close_payload(1000, "")));
+    raw.eof();
+}

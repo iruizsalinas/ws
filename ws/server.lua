@@ -88,6 +88,8 @@ function loop.handlers.request(token, data, _, server)
       return core.reply(token, status)
     end
   end
+  -- The application may have closed the listener from its accept callback.
+  if loop.servers[server] ~= s then return core.reply(token, 503) end
   for _, p in ipairs(req.protocols) do
     if s.protocols[p] then return core.reply(token, 0, p) end
   end

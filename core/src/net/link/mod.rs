@@ -54,6 +54,7 @@ pub(crate) struct Link {
     ready: Condvar,
     buffered: AtomicUsize,
     inbox: AtomicUsize,
+    /// Signals inbox space and write progress; always paired with `queue`.
     drained: Condvar,
     io: OnceLock<Io>,
     protocol: OnceLock<Option<String>>,

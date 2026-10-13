@@ -17,7 +17,7 @@ pub(super) enum Item {
 #[derive(Default)]
 pub(super) struct Queue {
     items: VecDeque<Item>,
-    done: bool,
+    pub(super) done: bool,
 }
 
 impl Link {
@@ -92,7 +92,10 @@ impl Link {
                         if tcp.write_all(&d).is_err() {
                             return self.end();
                         }
+                        // Pair the predicate update with flush_close's wait.
+                        let _q = lock(&self.queue);
                         self.buffered.fetch_sub(d.len(), Relaxed);
+                        self.drained.notify_all();
                     }
                     Item::Shutdown => {
                         let _ = tcp.shutdown(Shutdown::Write);

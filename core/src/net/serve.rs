@@ -64,8 +64,14 @@ pub(super) fn serve(shared: &Shared, tcp: TcpStream) {
     }
     let left = deadline.saturating_duration_since(Instant::now());
     let protocol = match rx.recv_timeout(left) {
-        Ok(Reply::Accept(protocol)) => protocol,
-        Ok(Reply::Reject(status)) => return reject(&mut s, status),
+        Ok(Reply::Accept(protocol)) => {
+            // Only an offered (and therefore validated) token may reach HTTP.
+            if protocol.as_ref().is_some_and(|p| !req.protocols.contains(p)) {
+                return reject(&mut s, 500);
+            }
+            protocol
+        }
+        Ok(Reply::Reject(status)) => return reject(&mut s, if (400..=599).contains(&status) { status } else { 500 }),
         Err(_) => return reject(&mut s, 503),
     };
     if s.write_all(&handshake::switching(&parsed.key, protocol.as_deref())).is_err() {

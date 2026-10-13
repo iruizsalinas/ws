@@ -27,13 +27,12 @@ local function step(limit)
   if limit and (not wait or wait > limit) then
     wait = limit
   end
-  local kind, id, data, code, server = core.wait(loop.hub, wait or -1)
-  for _ = 1, BATCH do
+  for i = 1, BATCH do
+    local kind, id, data, code, server = core.wait(loop.hub, i == 1 and (wait or -1) or 0)
     if not kind then
       break
     end
     loop.handlers[kind](id, data, code, server)
-    kind, id, data, code, server = core.wait(loop.hub, 0)
   end
   timer.fire()
   return active()

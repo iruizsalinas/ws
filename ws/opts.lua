@@ -31,10 +31,18 @@ local kinds = {
   list = function(v)
     if type(v) == "string" then v = { v } end
     if type(v) ~= "table" then return nil, "a string or an array of strings" end
+    local out, seen = {}, {}
     for _, item in ipairs(v) do
-      if type(item) ~= "string" or item:find("[%c,]") then return nil, "an array of tokens" end
+      if type(item) ~= "string" or not item:match("^[A-Za-z0-9!#$%%&'*+%.%^_`|~%-]+$") or seen[item] then
+        return nil, "an array of distinct nonempty tokens"
+      end
+      seen[item] = true
+      out[#out + 1] = item
     end
-    return v
+    for key in pairs(v) do
+      if not integer(key, 1, #out) then return nil, "a dense array of tokens" end
+    end
+    return out
   end,
   -- A table of names to values, as "name:value" lines.
   headers = function(v)

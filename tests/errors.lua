@@ -6,7 +6,7 @@ H.test("invalid arguments raise", function()
   H.raises(function() ws.connect("http://x") end, "URL scheme must be ws or wss")
   H.raises(function() ws.connect("ws://x", { nope = 1 }) end, "unknown option 'nope'")
   H.raises(function() ws.connect("ws://x", { timeout = 0 }) end, "option 'timeout' must be")
-  H.raises(function() ws.connect("ws://x", { protocols = "a b" }) end, "invalid subprotocol")
+  H.raises(function() ws.connect("ws://x", { protocols = "a b" }) end, "option 'protocols' must be")
   H.raises(function() ws.connect("ws://x", { headers = { Host = "y" } }) end, "header is managed by ws")
   H.raises(function() ws.connect("ws://x", { ca = "missing.pem" }) end, "missing.pem")
   H.raises(function() ws.listen({}) end, "option 'port' is required")
@@ -30,6 +30,24 @@ H.test("socket misuse raises", function()
     c:close(1000)
   end)
   H.run()
+end)
+
+H.test("protocol options are distinct nonempty tokens in a dense array", function()
+  local opts = require("ws.opts")
+  for _, protocols in ipairs({ "", "a b", { "chat", "chat" }, { [2] = "chat" }, { named = "chat" } }) do
+    H.raises(function() opts.check({ protocols = protocols }, { protocols = "list" }, 1) end,
+      "option 'protocols' must be")
+  end
+  local valid = "!#$%&'*+-.^_`|~09AZaz"
+  H.eq(opts.check({ protocols = valid }, { protocols = "list" }, 1).protocols[1], valid)
+end)
+
+H.test("native payload sizes reject negative and nonfinite numbers", function()
+  local core = require("ws.core")
+  local loop = require("ws.loop")
+  for _, size in ipairs({ -1, 0.5, math.huge, 0 / 0 }) do
+    H.raises(function() core.connect(loop.hub, "http://invalid", nil, nil, nil, nil, size) end, "payload size")
+  end
 end)
 
 H.test("unhandled client errors are raised from ws.run", function()

@@ -42,8 +42,13 @@ fn rejected_requests() {
         (req("Transfer-Encoding: chunked\r\n"), 400),
         (req("Sec-WebSocket-Protocol: a b\r\n"), 400),
         (req("Sec-WebSocket-Protocol: a, a\r\n"), 400),
+        (req("Sec-WebSocket-Protocol: \u{a0}chat\r\n"), 400),
+        (req("").replace("keep-alive, Upgrade", "\u{a0}Upgrade"), 400),
         (req(" folded: x\r\n"), 400),
         (req("X: a\nb\r\n"), 400),
+        (req("").replace("/chat", "/chat\tother"), 400),
+        (req("").replace("/chat", "/chat#fragment"), 400),
+        (req("").replace("/chat", "/caf\u{e9}"), 400),
         ("GET / HTTP/1.1\n\n".to_string(), 400),
     ];
     for (head, expected) in cases {

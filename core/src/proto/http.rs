@@ -72,14 +72,14 @@ pub(crate) fn one<'a>(headers: &'a Headers, name: &'a str) -> Option<&'a str> {
 
 /// Whether a comma-separated header contains `token`, ignoring case.
 pub(crate) fn has_token(headers: &Headers, name: &str, token: &str) -> bool {
-    all(headers, name).flat_map(|v| v.split(',')).any(|t| t.trim().eq_ignore_ascii_case(token))
+    all(headers, name).flat_map(|v| v.split(',')).any(|t| t.trim_matches([' ', '\t']).eq_ignore_ascii_case(token))
 }
 
 /// A comma-separated list of distinct tokens across all such headers.
 pub(crate) fn tokens(headers: &Headers, name: &str) -> Option<Vec<String>> {
     let mut out: Vec<String> = Vec::new();
     for item in all(headers, name).flat_map(|v| v.split(',')) {
-        let item = item.trim();
+        let item = item.trim_matches([' ', '\t']);
         if !is_token(item) || out.iter().any(|p| p == item) {
             return None;
         }

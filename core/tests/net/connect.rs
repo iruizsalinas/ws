@@ -65,6 +65,8 @@ fn invalid_arguments() {
     assert!(hub.connect("ws://x", bad).is_err());
     let bad = ClientOptions { headers: vec![("Sec-WebSocket-Key".into(), "x".into())], ..Default::default() };
     assert!(hub.connect("ws://x", bad).is_err());
+    let bad = ClientOptions { timeout: Duration::MAX, ..Default::default() };
+    assert!(hub.connect("ws://127.0.0.1:1", bad).is_err(), "overflowing timeout must not panic in the worker");
 }
 
 #[test]

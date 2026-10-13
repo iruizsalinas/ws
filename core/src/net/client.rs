@@ -59,12 +59,13 @@ pub(crate) fn connect(events: Sender<Event>, id: Id, input: &str, opts: Options)
         }
         false => None,
     };
+    let deadline = Instant::now().checked_add(opts.timeout).ok_or("connection timeout is too large")?;
     let link = Link::new(id, false, opts.max_payload, events);
     let target = Target { url, tls };
     let worker = link.clone();
     std::thread::Builder::new()
         .name("ws-client".into())
-        .spawn(move || match establish(&worker, &target, &opts) {
+        .spawn(move || match establish(&worker, &target, &opts, deadline) {
             Ok((tcp, tls, rest, protocol)) => worker.start(tcp, tls, rest, protocol, Event::Open { id }),
             Err(e) => worker.fail(&e),
         })
@@ -74,8 +75,7 @@ pub(crate) fn connect(events: Sender<Event>, id: Id, input: &str, opts: Options)
 
 type Established = (TcpStream, Option<Connection>, Vec<u8>, Option<String>);
 
-fn establish(link: &Link, target: &Target, opts: &Options) -> Result<Established, String> {
-    let deadline = Instant::now() + opts.timeout;
+fn establish(link: &Link, target: &Target, opts: &Options, deadline: Instant) -> Result<Established, String> {
     let alive = || link.state() == State::Connecting;
     let url = &target.url;
     let addrs =

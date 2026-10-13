@@ -89,3 +89,15 @@ H.test("server sockets have no url", function()
   H.run()
   H.eq(url, nil)
 end)
+
+H.test("closing a server inside accept prevents the upgrade", function()
+  local server
+  server = H.server({ accept = function() server:close(); return true end })
+  local c = ws.connect(H.url(server))
+  local opened, rejected = false, false
+  c:on("open", function() opened = true end)
+  c:on("error", function() rejected = true end)
+  H.run()
+  H.eq(opened, false, "upgrade after server close")
+  H.eq(rejected, true, "client rejection")
+end)

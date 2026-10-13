@@ -29,6 +29,16 @@ static uint64_t check_id(lua_State *L, int i) {
     return (uint64_t)n;
 }
 
+static uint64_t opt_size(lua_State *L, int i) {
+    /* Avoid lua_Integer: Lua 5.1 builds may use a 32-bit integer even when
+     * their lua_Number can exactly represent much larger payload limits. */
+    lua_Number n = luaL_optnumber(L, i, 0);
+    luaL_argcheck(L, n >= 0 && n <= 9007199254740992.0, i, "invalid payload size");
+    uint64_t size = (uint64_t)n;
+    luaL_argcheck(L, (lua_Number)size == n, i, "invalid payload size");
+    return size;
+}
+
 static void push_str(lua_State *L, ws_str s) {
     if (s.ptr) lua_pushlstring(L, s.ptr, s.len);
     else lua_pushnil(L);
@@ -80,7 +90,7 @@ static int l_wait(lua_State *L) {
 static int l_connect(lua_State *L) {
     uint64_t id = 0;
     int rc = ws_connect(check_id(L, 1), opt_str(L, 2), opt_str(L, 3), opt_str(L, 4), opt_str(L, 5),
-                        luaL_optnumber(L, 6, 0), (uint64_t)luaL_optinteger(L, 7, 0), &id);
+                        luaL_optnumber(L, 6, 0), opt_size(L, 7), &id);
     return handle(L, rc, id);
 }
 
@@ -89,7 +99,7 @@ static int l_listen(lua_State *L) {
     lua_Integer port = luaL_checkinteger(L, 3);
     luaL_argcheck(L, port >= 0 && port <= 65535, 3, "invalid port");
     int rc = ws_listen(check_id(L, 1), opt_str(L, 2), (uint16_t)port, opt_str(L, 4), opt_str(L, 5),
-                       (uint64_t)luaL_optinteger(L, 6, 0), &id);
+                       opt_size(L, 6), &id);
     return handle(L, rc, id);
 }
 

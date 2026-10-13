@@ -68,3 +68,44 @@ fn tls() {
         e => panic!("unexpected {}", describe(&e)),
     }
 }
+
+#[test]
+fn close_notify_does_not_discard_websocket_close_reply() {
+    use rustls::{ClientConnection, StreamOwned};
+    use std::io::{Read, Write};
+    use std::net::{Shutdown, TcpStream};
+    use ws_core::proto::frame::{self, BINARY, CLOSE};
+
+    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../tests/fixtures/tls/");
+    let hub = Hub::default();
+    let config = tls::server(&format!("{dir}server.pem"), &format!("{dir}server-key.pem")).unwrap();
+    let server =
+        hub.listen(ServerOptions { host: "127.0.0.1".into(), tls: Some(config), ..Default::default() }).unwrap();
+    let tcp = TcpStream::connect(server.addr()).unwrap();
+    tcp.set_read_timeout(Some(WAIT)).unwrap();
+    let config = tls::client(Some(&format!("{dir}ca.pem"))).unwrap();
+    let conn = ClientConnection::new(config, "localhost".try_into().unwrap()).unwrap();
+    let mut raw = StreamOwned::new(conn, tcp);
+    raw.write_all(UPGRADE.as_bytes()).unwrap();
+    let Event::Connection { conn, .. } = next(&hub, &accept) else { panic!("expected connection") };
+    let mut head = Vec::new();
+    while !head.ends_with(b"\r\n\r\n") {
+        let mut b = [0];
+        raw.read_exact(&mut b).unwrap();
+        head.push(b[0]);
+    }
+    let data = vec![7; 2 * 1024 * 1024];
+    conn.send(&data, true).unwrap();
+    raw.conn.writer().write_all(&frame::encode(CLOSE, &frame::close_payload(1000, ""), Some([1; 4]))).unwrap();
+    raw.conn.send_close_notify();
+    while raw.conn.wants_write() {
+        raw.conn.write_tls(&mut raw.sock).unwrap();
+    }
+    raw.sock.shutdown(Shutdown::Write).unwrap();
+    let mut bytes = Vec::new();
+    raw.read_to_end(&mut bytes).unwrap();
+    let mut expected = frame::encode(BINARY, &data, None);
+    expected.extend(frame::encode(CLOSE, &frame::close_payload(1000, ""), None));
+    assert_eq!(bytes.len(), expected.len());
+    assert_eq!(bytes, expected);
+}

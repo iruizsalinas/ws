@@ -107,3 +107,71 @@ fn mask_is_involution() {
     apply_mask(&mut d, KEY);
     assert_eq!(d, (0..37).collect::<Vec<u8>>());
 }
+
+#[test]
+fn invalid_lengths_rejected_from_header() {
+    for bytes in [
+        vec![0x82, 126, 0, 125],
+        vec![0x82, 127, 0, 0, 0, 0, 0, 0, 0xff, 0xff],
+        vec![0x82, 127, 0x80, 0, 0, 0, 0, 0, 0, 0],
+        vec![0x82, 127, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff],
+    ] {
+        let mut r = Reader::new(false, usize::MAX);
+        r.push(&bytes);
+        assert_eq!(r.message().unwrap_err().0, 1002, "{bytes:?}");
+    }
+}
+
+#[test]
+fn invalid_fragment_sequence_rejected_before_payload() {
+    let mut r = Reader::new(false, 1024);
+    r.push(&[0x80, 125]);
+    assert_eq!(r.message().unwrap_err().0, 1002);
+    let mut r = Reader::new(false, 1024);
+    r.push(&[0x01, 0, 0x82, 125]);
+    assert_eq!(r.message().unwrap_err().0, 1002);
+}
+
+#[test]
+fn mutated_streams_are_independent_of_tcp_chunking() {
+    let seed = [
+        frame(false, TEXT, b"hello "),
+        frame(true, PING, b"check"),
+        frame(true, CONTINUATION, "\u{1f600}".as_bytes()),
+        frame(true, BINARY, &[42; 257]),
+        frame(true, CLOSE, &close_payload(1000, "done")),
+    ]
+    .concat();
+    let mut state = 0x6455_u64;
+    let mut random = || {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        state as usize
+    };
+    for case in 0..4000 {
+        let mut bytes = seed.clone();
+        for _ in 0..case % 4 {
+            let at = random() % bytes.len();
+            bytes[at] ^= 1 << (random() % 8);
+        }
+        if case % 5 == 0 {
+            bytes.truncate(random() % bytes.len());
+        }
+        let mut reader = Reader::new(true, 1 << 20);
+        let mut messages = Vec::new();
+        let chunked = (|| -> Result<Vec<Msg>, Fail> {
+            let mut at = 0;
+            while at < bytes.len() {
+                let end = (at + 1 + random() % 31).min(bytes.len());
+                reader.push(&bytes[at..end]);
+                while let Some(msg) = reader.message()? {
+                    messages.push(msg);
+                }
+                at = end;
+            }
+            Ok(messages)
+        })();
+        assert_eq!(chunked, read(true, &bytes), "mutation {case}");
+    }
+}
