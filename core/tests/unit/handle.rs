@@ -6,7 +6,7 @@ use std::sync::mpsc::channel;
 fn late_frames_cannot_reopen_a_terminated_connection() {
     for close in [false, true] {
         let (tx, rx) = channel();
-        let link = Link::new(1, true, 1024, tx);
+        let link = Link::new(1, true, 1024, crate::MAX_BUFFER, tx.into());
         link.terminate();
         if close {
             link.closing(Some((1000, String::new())));
@@ -15,7 +15,7 @@ fn late_frames_cannot_reopen_a_terminated_connection() {
         }
         assert_eq!(link.state(), super::super::State::Closed);
         link.end();
-        assert!(matches!(rx.try_recv(), Ok(Event::Close { code: 1006, .. })));
+        assert!(matches!(rx.try_recv().map(|q| q.event), Ok(Event::Close { code: 1006, .. })));
         assert!(rx.try_recv().is_err(), "only one final event may be emitted");
     }
 }
@@ -23,7 +23,7 @@ fn late_frames_cannot_reopen_a_terminated_connection() {
 #[test]
 fn closing_delivery_does_not_grow_a_full_inbox() {
     let (tx, rx) = channel();
-    let link = Link::new(1, true, 1024, tx);
+    let link = Link::new(1, true, 1024, crate::MAX_BUFFER, tx.into());
     let limit = super::super::read::INBOX_LIMIT;
     link.inbox.store(limit, Relaxed);
     lock(&link.flags).state = super::super::State::Closing;
@@ -37,13 +37,14 @@ fn closing_delivery_does_not_grow_a_full_inbox() {
 #[test]
 fn sends_apply_backpressure_to_a_stalled_writer() {
     let (tx, _rx) = channel();
-    let link = Link::new(1, true, 1024, tx);
+    let link = Link::new(1, true, 1024, 64, tx.into());
     lock(&link.flags).state = super::super::State::Open;
     // The buffered count includes the batch currently held by the writer.
-    link.buffered.store(16 * 1024 * 1024, Relaxed);
+    link.buffered.store(64, Relaxed);
     assert_eq!(link.send(frame::TEXT, b"more"), Err("send buffer is full"));
     assert_eq!(link.send(frame::PING, b"more"), Err("send buffer is full"));
     assert_eq!(link.state(), super::super::State::Open);
-    link.buffered.store(0, Relaxed);
-    assert_eq!(link.send(frame::TEXT, b"retry"), Ok(()));
+    // Below the configured limit, a frame is accepted even if it crosses it.
+    link.buffered.store(63, Relaxed);
+    assert_eq!(link.send(frame::BINARY, &[0; 100]), Ok(()));
 }

@@ -19,6 +19,8 @@ CONFIG = ROOT / ".github/autobahn"
 REPORTS = ROOT / ".build/autobahn"
 IMAGE = "crossbario/autobahn-testsuite:25.10.1@sha256:519915fb568b04c9383f70a1c405ae3ff44ab9e35835b085239c258b6fac3074"
 PASSING = {"OK", "NON-STRICT", "INFORMATIONAL"}
+# Cases in the pinned image, minus compression; a short report means cases were skipped.
+CASES = 301
 MOUNTS = ["-v", f"{CONFIG}:/config:ro", "-v", f"{REPORTS}:/reports"]
 
 
@@ -66,10 +68,10 @@ def check(side):
     index = json.loads((REPORTS / side / "index.json").read_text())
     results = [(case, r) for cases in index.values() for case, r in cases.items()]
     failed = [(case, r) for case, r in results if r["behavior"] not in PASSING or r["behaviorClose"] not in PASSING]
-    print(f"{side}: {len(results)} cases, {len(failed)} failed")
+    print(f"{side}: {len(results)} of {CASES} cases ran, {len(failed)} failed")
     for case, r in sorted(failed, key=lambda f: [int(p) for p in f[0].split(".")]):
         print(f"  {case}: {r['behavior']} / close {r['behaviorClose']}")
-    return results and not failed
+    return len(results) == CASES and not failed
 
 
 def main():

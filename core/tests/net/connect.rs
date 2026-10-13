@@ -60,6 +60,15 @@ fn connection_refused() {
 #[test]
 fn invalid_arguments() {
     let hub = Hub::default();
+    for bad in [
+        ServerOptions { max_connections: 0, ..Default::default() },
+        ServerOptions { max_buffer: 0, ..Default::default() },
+        ServerOptions { max_message: 0, ..Default::default() },
+    ] {
+        assert!(hub.listen(bad).is_err());
+    }
+    assert!(hub.connect("ws://x", ClientOptions { max_buffer: 0, ..Default::default() }).is_err());
+    assert!(hub.connect("ws://x", ClientOptions { max_message: 0, ..Default::default() }).is_err());
     assert!(hub.connect("http://x", ClientOptions::default()).is_err());
     let bad = ClientOptions { protocols: vec!["a b".into()], ..Default::default() };
     assert!(hub.connect("ws://x", bad).is_err());
@@ -80,4 +89,23 @@ fn server_close_stops_accepting() {
         server.close();
         assert!(TcpStream::connect_timeout(&addr, Duration::from_millis(200)).is_err(), "listener still accepting");
     }
+}
+
+#[test]
+fn server_close_cancels_an_upgrade_awaiting_a_decision() {
+    use std::io::{Read, Write};
+    let hub = Hub::default();
+    let server = listen(&hub);
+    let mut raw = Raw::connect(&server);
+    raw.0.write_all(UPGRADE.as_bytes()).unwrap();
+    let Event::Request { reply, .. } = hub.recv(Some(WAIT)).unwrap() else { panic!("expected request") };
+    server.close();
+    reply.send(Reply::Accept(None)).unwrap();
+    let mut head = [0; 1024];
+    match raw.0.read(&mut head) {
+        Ok(0) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::ConnectionReset => {}
+        other => panic!("closed listener allowed an upgrade: {other:?}"),
+    }
+    assert!(hub.recv(Some(Duration::from_millis(50))).is_none());
 }

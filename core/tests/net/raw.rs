@@ -176,7 +176,7 @@ fn full_inbox_does_not_block_close_reply() {
     raw.0.write_all(UPGRADE.as_bytes()).unwrap();
     let Event::Connection { conn, .. } = next(&hub, &accept) else { panic!("expected connection") };
     assert!(raw.request("").starts_with("HTTP/1.1 101 "));
-    raw.send(frame::BINARY, &vec![0; MAX_PAYLOAD]);
+    raw.send(frame::BINARY, &vec![0; MAX_MESSAGE]);
     assert!(matches!(next(&hub, &accept), Event::Message { .. }));
     // Intentionally do not acknowledge the message: the inbox remains full.
     conn.close(1000, "").unwrap();

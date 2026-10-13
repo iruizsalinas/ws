@@ -41,6 +41,7 @@ pub extern "C" fn ws_connect(
     ca: WsStr,
     timeout: f64,
     max: u64,
+    buffer: u64,
     id: &mut u64,
 ) -> c_int {
     let run = || -> Result<u64, c_int> {
@@ -58,7 +59,10 @@ pub extern "C" fn ws_connect(
             opts.timeout = Duration::from_secs_f64(timeout.min(1.0e6));
         }
         if max > 0 {
-            opts.max_payload = usize::try_from(max).unwrap_or(usize::MAX);
+            opts.max_message = usize::try_from(max).unwrap_or(usize::MAX);
+        }
+        if buffer > 0 {
+            opts.max_buffer = usize::try_from(buffer).unwrap_or(usize::MAX);
         }
         let conn = hub.connect(url, opts).map_err(|e| fail(FATAL, &e))?;
         let conn_id = conn.id();
@@ -74,7 +78,8 @@ pub extern "C" fn ws_connect(
     )
 }
 
-/// Binds a server. Certificate problems are fatal; bind errors are not.
+/// Binds a server; zero limits keep the defaults (unlimited connections).
+/// Certificate problems are fatal; bind errors are not.
 #[unsafe(no_mangle)]
 pub extern "C" fn ws_listen(
     hub_id: u64,
@@ -83,16 +88,25 @@ pub extern "C" fn ws_listen(
     cert: WsStr,
     key: WsStr,
     max: u64,
+    buffer: u64,
+    connections: u64,
     id: &mut u64,
 ) -> c_int {
     let run = || -> Result<u64, c_int> {
         let hub = hub(hub_id)?;
         let mut opts = ServerOptions { port, ..Default::default() };
+        if connections > 0 {
+            opts.max_connections =
+                usize::try_from(connections).map_err(|_| fail(FATAL, "connection limit is too large"))?;
+        }
         if let Some(host) = host.text("host")? {
             opts.host = host.to_string();
         }
         if max > 0 {
-            opts.max_payload = usize::try_from(max).unwrap_or(usize::MAX);
+            opts.max_message = usize::try_from(max).unwrap_or(usize::MAX);
+        }
+        if buffer > 0 {
+            opts.max_buffer = usize::try_from(buffer).unwrap_or(usize::MAX);
         }
         opts.tls = match (cert.text("cert")?, key.text("key")?) {
             (Some(cert), Some(key)) => Some(tls::server(cert, key).map_err(|e| fail(FATAL, &e))?),

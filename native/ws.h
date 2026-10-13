@@ -28,9 +28,9 @@ double ws_now(void);
 int ws_wait(uint64_t hub, double timeout, ws_event *ev);
 
 int ws_connect(uint64_t hub, ws_str url, ws_str protocols, ws_str headers, ws_str ca,
-               double timeout, uint64_t max, uint64_t *id);
+               double timeout, uint64_t max, uint64_t buffer, uint64_t *id);
 int ws_listen(uint64_t hub, ws_str host, uint16_t port, ws_str cert, ws_str key,
-              uint64_t max, uint64_t *id);
+              uint64_t max, uint64_t buffer, uint64_t connections, uint64_t *id);
 uint16_t ws_port(uint64_t server);
 void ws_unlisten(uint64_t server);
 int ws_reply(uint64_t token, uint16_t status, ws_str protocol);

@@ -4,12 +4,12 @@ use super::dial::dial;
 use super::link::Link;
 use super::stream::{HeadError, Stream};
 use crate::proto::{base64, handshake, http, url};
-use crate::{Event, Headers, Id, MAX_PAYLOAD, State, random, tls};
+use crate::queue::Events;
+use crate::{Event, Headers, Id, MAX_BUFFER, MAX_MESSAGE, State, random, tls};
 use rustls::pki_types::ServerName;
 use rustls::{ClientConfig, ClientConnection, Connection};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::Arc;
-use std::sync::mpsc::Sender;
 use std::time::{Duration, Instant};
 
 pub struct Options {
@@ -18,7 +18,8 @@ pub struct Options {
     /// TLS settings for `wss://`; Mozilla's roots when `None`.
     pub tls: Option<Arc<ClientConfig>>,
     pub timeout: Duration,
-    pub max_payload: usize,
+    pub max_message: usize,
+    pub max_buffer: usize,
 }
 
 impl Default for Options {
@@ -28,7 +29,8 @@ impl Default for Options {
             headers: Vec::new(),
             tls: None,
             timeout: Duration::from_secs(10),
-            max_payload: MAX_PAYLOAD,
+            max_message: MAX_MESSAGE,
+            max_buffer: MAX_BUFFER,
         }
     }
 }
@@ -38,8 +40,11 @@ struct Target {
     tls: Option<(Arc<ClientConfig>, ServerName<'static>)>,
 }
 
-pub(crate) fn connect(events: Sender<Event>, id: Id, input: &str, opts: Options) -> Result<Arc<Link>, String> {
+pub(crate) fn connect(events: Events, id: Id, input: &str, opts: Options) -> Result<Arc<Link>, String> {
     let url = url::parse(input)?;
+    if opts.max_message == 0 || opts.max_buffer == 0 {
+        return Err("limits must be positive".into());
+    }
     for (i, p) in opts.protocols.iter().enumerate() {
         if !http::is_token(p) || opts.protocols[..i].contains(p) {
             return Err(format!("invalid subprotocol: {p}"));
@@ -60,7 +65,7 @@ pub(crate) fn connect(events: Sender<Event>, id: Id, input: &str, opts: Options)
         false => None,
     };
     let deadline = Instant::now().checked_add(opts.timeout).ok_or("connection timeout is too large")?;
-    let link = Link::new(id, false, opts.max_payload, events);
+    let link = Link::new(id, false, opts.max_message, opts.max_buffer, events);
     let target = Target { url, tls };
     let worker = link.clone();
     std::thread::Builder::new()

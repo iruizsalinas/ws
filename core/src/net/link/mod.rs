@@ -8,11 +8,11 @@ mod handle;
 mod read;
 mod write;
 
+use crate::queue::Events;
 use crate::{Event, Id, lock};
 use rustls::Connection;
 use std::net::TcpStream;
 use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
-use std::sync::mpsc::Sender;
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use write::Queue;
@@ -20,8 +20,6 @@ use write::Queue;
 const CLOSE_TIMEOUT: Duration = Duration::from_secs(5);
 /// Accounting cost of an event beyond its payload.
 const EVENT_COST: usize = 64;
-/// Stop accepting application frames while the writer is this far behind.
-const OUTBOX_LIMIT: usize = 16 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum State {
@@ -50,7 +48,9 @@ pub(crate) struct Link {
     id: Id,
     server: bool,
     max: usize,
-    events: Sender<Event>,
+    /// Stop accepting application frames while the writer is this far behind.
+    buffer: usize,
+    events: Events,
     flags: Mutex<Flags>,
     queue: Mutex<Queue>,
     ready: Condvar,
@@ -63,12 +63,13 @@ pub(crate) struct Link {
 }
 
 impl Link {
-    pub fn new(id: Id, server: bool, max: usize, events: Sender<Event>) -> Arc<Link> {
+    pub fn new(id: Id, server: bool, max: usize, buffer: usize, events: Events) -> Arc<Link> {
         let flags = Flags { state: State::Connecting, sent_close: false, received: None, failed: None, deadline: None };
         Arc::new(Link {
             id,
             server,
             max,
+            buffer,
             events,
             flags: Mutex::new(flags),
             queue: Mutex::default(),
@@ -106,7 +107,7 @@ impl Link {
         // Checked under flags, which serializes application sends. A single
         // large frame is allowed to cross the threshold; subsequent sends
         // must wait for the writer, including its currently in-flight batch.
-        if self.buffered.load(Relaxed) >= OUTBOX_LIMIT {
+        if self.buffered.load(Relaxed) >= self.buffer {
             return Err("send buffer is full");
         }
         self.push(self.frame(op, payload));

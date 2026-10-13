@@ -99,7 +99,8 @@ ws.run()
 | `headers` | `nil` | Extra request headers |
 | `ca` | `nil` | Path to a PEM file of trusted certificates |
 | `timeout` | `10` | Connection timeout in seconds |
-| `limit` | `1048576` | Maximum message size in bytes (1 MiB) |
+| `limits.message` | `1048576` | Maximum message size in bytes (1 MiB) |
+| `limits.buffer` | `16777216` | Unsent bytes allowed before `send` returns `nil, "send buffer is full"` (16 MiB) |
 
 ### Server Options
 
@@ -111,7 +112,9 @@ ws.run()
 | `accept` | `nil` | `function(req)` returning `true` to accept, or `false, status` to reject |
 | `cert` | `nil` | Path to a PEM certificate, to serve `wss://` |
 | `key` | `nil` | Path to the PEM private key |
-| `limit` | `1048576` | Maximum message size in bytes (1 MiB) |
+| `limits.message` | `1048576` | Maximum message size in bytes (1 MiB) |
+| `limits.buffer` | `16777216` | Unsent bytes allowed before `send` returns `nil, "send buffer is full"` (16 MiB) |
+| `limits.connections` | `nil` | Maximum concurrent connections; extra ones are dropped (unlimited by default) |
 
 ## License
 

@@ -6,7 +6,7 @@ local ws = require("ws")
 local base, agent = arg[1], "ws"
 
 local function open(path, on_message, on_close)
-  local c = ws.connect(base .. path, { limit = 64 * 1024 * 1024 })
+  local c = ws.connect(base .. path, { limits = { message = 64 * 1024 * 1024 } })
   -- Many cases fail the connection on purpose.
   c:on("error", function() end)
   c:on("message", function(data, binary) on_message(c, data, binary) end)

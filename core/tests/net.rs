@@ -6,6 +6,8 @@ mod basic;
 mod common;
 #[path = "net/connect.rs"]
 mod connect;
+#[path = "net/limits.rs"]
+mod limits;
 #[path = "net/raw.rs"]
 mod raw;
 #[path = "net/tls.rs"]

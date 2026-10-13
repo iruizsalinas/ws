@@ -40,7 +40,7 @@ fn bytes_after_tls_close_do_not_spin() {
     server.read_tls(&mut close.as_slice()).unwrap();
     assert!(server.process_new_packets().unwrap().peer_has_closed());
     let (events, _) = channel();
-    let link = Link::new(1, true, 1024, events);
+    let link = Link::new(1, true, 1024, crate::MAX_BUFFER, events.into());
     let (done, result) = channel();
     let worker = std::thread::spawn(move || {
         let outcome = link.open(&Mutex::new(server), &[0; 16], &mut Vec::new());
@@ -61,7 +61,7 @@ fn tls_plaintext_is_drained_between_records() {
             client.write_tls(&mut encrypted).unwrap();
         }
         let (events, _) = channel();
-        let link = Link::new(1, true, expected.len(), events);
+        let link = Link::new(1, true, expected.len(), crate::MAX_BUFFER, events.into());
         let server = Mutex::new(server);
         let mut plain = Vec::new();
         for bytes in encrypted.chunks(chunk) {
@@ -74,7 +74,7 @@ fn tls_plaintext_is_drained_between_records() {
 #[test]
 fn closing_connections_do_not_wait_for_application_consumption() {
     let (events, _rx) = channel();
-    let link = Link::new(1, true, 1024, events);
+    let link = Link::new(1, true, 1024, crate::MAX_BUFFER, events.into());
     link.inbox.store(INBOX_LIMIT, Relaxed);
     lock(&link.flags).state = State::Closing;
     assert!(link.wait_inbox(), "backpressure must not prevent reading the peer's close reply");

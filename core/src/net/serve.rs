@@ -4,10 +4,12 @@ use super::link::Link;
 use super::server::Shared;
 use super::stream::{HeadError, Stream};
 use crate::proto::handshake;
+use crate::queue::Permit;
 use crate::{Conn, Event, Reply, Request};
 use rustls::{Connection, ServerConnection};
 use std::io::{ErrorKind, Read};
 use std::net::{Shutdown, TcpStream};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
 use std::sync::mpsc::sync_channel;
 use std::time::{Duration, Instant};
@@ -31,11 +33,12 @@ impl Drop for Pending<'_> {
     }
 }
 
-pub(super) fn serve(shared: &Shared, tcp: TcpStream) {
+pub(super) fn serve(shared: &Shared, tcp: TcpStream, permit: Arc<Permit>) {
+    let events = shared.events.admitted(permit.clone());
     let mut pending = Pending(Some(&shared.pending));
     let Ok(addr) = tcp.peer_addr() else { return };
     let deadline = Instant::now() + HANDSHAKE_TIMEOUT;
-    let alive = || true;
+    let alive = || !shared.stop.load(Relaxed);
     let tls = match &shared.tls {
         Some(config) => match ServerConnection::new(config.clone()) {
             Ok(c) => Some(Connection::from(c)),
@@ -59,7 +62,7 @@ pub(super) fn serve(shared: &Shared, tcp: TcpStream) {
     };
     let req = Request { path: parsed.target, headers: parsed.headers, protocols: parsed.protocols, addr };
     let (tx, rx) = sync_channel(1);
-    if shared.events.send(Event::Request { server: shared.id, req: req.clone(), reply: tx }).is_err() {
+    if events.send(Event::Request { server: shared.id, req: req.clone(), reply: tx }).is_err() {
         return;
     }
     let left = deadline.saturating_duration_since(Instant::now());
@@ -78,7 +81,7 @@ pub(super) fn serve(shared: &Shared, tcp: TcpStream) {
         return;
     }
     pending.done();
-    let link = Link::new(crate::next_id(), true, shared.max, shared.events.clone());
+    let link = Link::new(crate::next_id(), true, shared.max, shared.buffer, events);
     let open = Event::Connection { server: shared.id, conn: Conn(link.clone()), req };
     link.start(s.tcp, s.tls, rest, protocol, open);
 }

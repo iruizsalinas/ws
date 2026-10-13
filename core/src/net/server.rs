@@ -1,11 +1,12 @@
 //! Listening sockets and the server side of the handshake.
 
 use super::serve::serve;
-use crate::{Event, Id, MAX_PAYLOAD, lock};
+use crate::queue::{Events, Permit};
+use crate::{Id, MAX_BUFFER, MAX_MESSAGE, lock};
 use rustls::ServerConfig;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::Relaxed};
-use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::mpsc::{Receiver, channel};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -16,12 +17,23 @@ pub struct Options {
     pub host: String,
     pub port: u16,
     pub tls: Option<Arc<ServerConfig>>,
-    pub max_payload: usize,
+    pub max_message: usize,
+    pub max_buffer: usize,
+    /// Includes handshakes, live connections and undrained connection events.
+    /// Unlimited (`usize::MAX`) by default.
+    pub max_connections: usize,
 }
 
 impl Default for Options {
     fn default() -> Self {
-        Options { host: "0.0.0.0".into(), port: 0, tls: None, max_payload: MAX_PAYLOAD }
+        Options {
+            host: "0.0.0.0".into(),
+            port: 0,
+            tls: None,
+            max_message: MAX_MESSAGE,
+            max_buffer: MAX_BUFFER,
+            max_connections: usize::MAX,
+        }
     }
 }
 
@@ -35,10 +47,14 @@ pub struct Server {
 
 pub(super) struct Shared {
     pub id: Id,
-    pub events: Sender<Event>,
+    pub events: Events,
     pub tls: Option<Arc<ServerConfig>>,
     pub max: usize,
+    pub buffer: usize,
     pub pending: AtomicUsize,
+    pub stop: Arc<AtomicBool>,
+    connections: Arc<AtomicUsize>,
+    max_connections: usize,
 }
 
 impl Server {
@@ -75,11 +91,24 @@ impl Drop for Server {
     }
 }
 
-pub(crate) fn listen(events: Sender<Event>, id: Id, opts: Options) -> std::io::Result<Server> {
+pub(crate) fn listen(events: Events, id: Id, opts: Options) -> std::io::Result<Server> {
+    if opts.max_message == 0 || opts.max_buffer == 0 || opts.max_connections == 0 {
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "limits must be positive"));
+    }
     let listener = TcpListener::bind((opts.host.as_str(), opts.port))?;
     let addr = listener.local_addr()?;
     let stop = Arc::new(AtomicBool::new(false));
-    let shared = Arc::new(Shared { id, events, tls: opts.tls, max: opts.max_payload, pending: AtomicUsize::new(0) });
+    let shared = Arc::new(Shared {
+        id,
+        events,
+        tls: opts.tls,
+        max: opts.max_message,
+        buffer: opts.max_buffer,
+        pending: AtomicUsize::new(0),
+        stop: stop.clone(),
+        connections: Arc::default(),
+        max_connections: opts.max_connections,
+    });
     let flag = stop.clone();
     let (done, released) = channel();
     std::thread::Builder::new().name("ws-accept".into()).spawn(move || {
@@ -99,12 +128,15 @@ fn accept(listener: TcpListener, shared: Arc<Shared>, stop: Arc<AtomicBool>) {
             std::thread::sleep(Duration::from_millis(50));
             continue;
         };
+        let Some(permit) = Permit::acquire(&shared.connections, shared.max_connections) else {
+            continue;
+        };
         if shared.pending.fetch_add(1, Relaxed) >= MAX_PENDING {
             shared.pending.fetch_sub(1, Relaxed);
             continue;
         }
         let s = shared.clone();
-        let spawned = std::thread::Builder::new().name("ws-conn".into()).spawn(move || serve(&s, tcp));
+        let spawned = std::thread::Builder::new().name("ws-conn".into()).spawn(move || serve(&s, tcp, permit));
         if spawned.is_err() {
             shared.pending.fetch_sub(1, Relaxed);
         }

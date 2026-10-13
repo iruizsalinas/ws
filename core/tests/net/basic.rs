@@ -120,7 +120,7 @@ fn rejected_upgrade() {
 fn message_too_big() {
     let hub = Hub::default();
     let server =
-        hub.listen(ServerOptions { host: "127.0.0.1".into(), max_payload: 1000, ..Default::default() }).unwrap();
+        hub.listen(ServerOptions { host: "127.0.0.1".into(), max_message: 1000, ..Default::default() }).unwrap();
     let (client, peer) = pair(&hub, &server, ClientOptions::default());
     client.send(&[1; 1001], true).unwrap();
     let mut events = Vec::new();

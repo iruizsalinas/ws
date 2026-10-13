@@ -25,14 +25,37 @@ H.test("text and binary echo", function()
 end)
 
 H.test("large message within a raised limit", function()
-  local server = H.echo({ limit = 4 * 1024 * 1024 })
+  local server = H.echo({ limits = { message = 4 * 1024 * 1024 } })
   local big = string.rep("0123456789", 200000)
-  local c = ws.connect(H.url(server), { limit = 4 * 1024 * 1024 })
+  local c = ws.connect(H.url(server), { limits = { message = 4 * 1024 * 1024 } })
   local echoed
   c:on("open", function() c:send(big, true) end)
   c:on("message", function(data) echoed = data; c:close() end)
   H.run()
   H.eq(echoed == big, true, "2 MB roundtrip")
+end)
+
+H.test("a full send buffer rejects sends until it drains", function()
+  -- The server stops reading while this test sends, so unsent data piles up.
+  local server = H.server({ limits = { message = 1024 * 1024 } })
+  local chunk = string.rep("x", 256 * 1024)
+  local c = ws.connect(H.url(server), { limits = { buffer = 1024 * 1024 } })
+  local accepted, err = 0, nil
+  c:on("open", function()
+    for _ = 1, 400 do
+      local ok, e = c:send(chunk, true)
+      if not ok then
+        err = e
+        break
+      end
+      accepted = accepted + 1
+    end
+    c:terminate()
+    server:close()
+  end)
+  H.run()
+  H.eq(err, "send buffer is full")
+  assert(accepted >= 4, "sends below the limit are accepted")
 end)
 
 H.test("ping and pong", function()

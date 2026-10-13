@@ -56,6 +56,11 @@ pub fn request(head: &[u8]) -> Result<Request, u16> {
     if !one(&headers, "host").is_some_and(valid_host) {
         return Err(400);
     }
+    // Origin is a singleton (RFC 6454 section 7.3). Do not expose an
+    // ambiguous first/last/joined value to the application's access check.
+    if all(&headers, "origin").nth(1).is_some() {
+        return Err(400);
+    }
     // A body would be read as frames: refuse anything that declares one.
     if all(&headers, "transfer-encoding").next().is_some() || all(&headers, "content-length").any(|v| v != "0") {
         return Err(400);

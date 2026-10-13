@@ -38,6 +38,7 @@ fn rejected_requests() {
         (req("").replacen("keep-alive, Upgrade", "keep-alive", 1), 400),
         (req("").replacen(KEY, "c2hvcnQ=", 1), 400),
         (req("Sec-WebSocket-Key: AAAAAAAAAAAAAAAAAAAAAA==\r\n"), 400),
+        (req("Origin: https://trusted.example\r\nOrigin: https://other.example\r\n"), 400),
         (req("Content-Length: 5\r\n"), 400),
         (req("Transfer-Encoding: chunked\r\n"), 400),
         (req("Sec-WebSocket-Protocol: a b\r\n"), 400),

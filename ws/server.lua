@@ -7,8 +7,8 @@ local Socket = require("ws.socket")
 
 local EVENTS = { connection = true }
 local OPTIONS = {
-  port = "port", host = "string", protocols = "list", accept = "function",
-  limit = "size", cert = "string", key = "string",
+  port = "port", host = "string", protocols = "list", accept = "function", cert = "string", key = "string",
+  limits = { message = "size", buffer = "size", connections = "size" },
 }
 
 local Server = {}
@@ -21,7 +21,9 @@ function Server.listen(arg)
   if o.port == nil then
     error("option 'port' is required", 2)
   end
-  local id, err = core.listen(loop.hub, o.host or "0.0.0.0", o.port, o.cert, o.key, o.limit)
+  local limits = o.limits or {}
+  local host = o.host or "0.0.0.0"
+  local id, err = core.listen(loop.hub, host, o.port, o.cert, o.key, limits.message, limits.buffer, limits.connections)
   if not id then
     error(err, 2)
   end

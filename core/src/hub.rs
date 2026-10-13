@@ -2,8 +2,9 @@
 
 use crate::net::{client, link::Link, server};
 use crate::proto::frame;
+use crate::queue::{Events, Queued};
 use crate::{ClientOptions, Event, Id, Server, ServerOptions, State, lock, next_id};
-use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::mpsc::{Receiver, channel};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -70,14 +71,14 @@ impl Conn {
 
 /// Collects events from every connection and server it created.
 pub struct Hub {
-    tx: Sender<Event>,
-    rx: Mutex<Receiver<Event>>,
+    tx: Events,
+    rx: Mutex<Receiver<Queued>>,
 }
 
 impl Default for Hub {
     fn default() -> Self {
         let (tx, rx) = channel();
-        Hub { tx, rx: Mutex::new(rx) }
+        Hub { tx: tx.into(), rx: Mutex::new(rx) }
     }
 }
 
@@ -89,6 +90,7 @@ impl Hub {
             None => rx.recv().ok(),
             Some(t) => rx.recv_timeout(t).ok(),
         }
+        .map(|queued| queued.event)
     }
 
     /// Starts connecting in the background; `Err` means invalid arguments.

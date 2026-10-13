@@ -59,25 +59,31 @@ local kinds = {
   end,
 }
 
--- Validates `options` against `spec` (key -> kind); errors blame `level`.
-function opts.check(options, spec, level)
+-- Validates `options` against `spec` (key -> kind, or a nested spec table);
+-- errors blame `level` and name nested options by path, like `limits.message`.
+function opts.check(options, spec, level, path)
   if options == nil then
     return {}
   end
   if type(options) ~= "table" then
-    error("options must be a table", level + 1)
+    error(path and ("option '" .. path .. "' must be a table") or "options must be a table", level + 1)
   end
   local out = {}
   for key, value in pairs(options) do
     local kind = spec[key]
+    local name = path and (path .. "." .. tostring(key)) or tostring(key)
     if not kind then
-      error("unknown option '" .. tostring(key) .. "'", level + 1)
+      error("unknown option '" .. name .. "'", level + 1)
     end
-    local v, expected = kinds[kind](value)
-    if v == nil then
-      error("option '" .. key .. "' must be " .. expected, level + 1)
+    if type(kind) == "table" then
+      out[key] = opts.check(value, kind, level + 1, name)
+    else
+      local v, expected = kinds[kind](value)
+      if v == nil then
+        error("option '" .. name .. "' must be " .. expected, level + 1)
+      end
+      out[key] = v
     end
-    out[key] = v
   end
   return out
 end
