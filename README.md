@@ -75,6 +75,8 @@ ws.run()
 | `:close(code, reason)` | Close the connection |
 | `:terminate()` | Drop the connection immediately |
 | `:on(event, fn)` | Register an event listener |
+| `:once(event, fn)` | Register a listener for the next event only |
+| `:off(event, fn)` | Remove a listener |
 
 **Properties:** `state`, `protocol`, `url`, `buffered`
 
@@ -85,7 +87,10 @@ ws.run()
 | Method | Description |
 |---|---|
 | `:close()` | Stop the server and close its connections |
+| `:clients()` | List the open connections, oldest first |
 | `:on(event, fn)` | Register an event listener |
+| `:once(event, fn)` | Register a listener for the next event only |
+| `:off(event, fn)` | Remove a listener |
 
 **Properties:** `port`
 

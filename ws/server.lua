@@ -45,6 +45,26 @@ function Server:on(name, fn)
   return self
 end
 
+function Server:once(name, fn)
+  emitter.once(self, EVENTS, name, fn)
+  return self
+end
+
+function Server:off(name, fn)
+  emitter.off(self, EVENTS, name, fn)
+  return self
+end
+
+-- This server's sockets, oldest first, from `connection` until `close`.
+function Server:clients()
+  local list = {}
+  for _, s in pairs(loop.sockets) do
+    if s.server == self then list[#list + 1] = s end
+  end
+  table.sort(list, function(a, b) return a.id < b.id end)
+  return list
+end
+
 -- Stops listening and closes this server's sockets with 1001 (going away).
 function Server:close()
   if loop.servers[self.id] ~= self then return end

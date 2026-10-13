@@ -5,7 +5,7 @@ package.cpath = "./?.so;./?.dll;" .. package.cpath
 
 dofile("tests/loop.lua")
 local H = require("tests.helper")
-for _, name in ipairs({ "echo", "close", "server", "errors", "timers", "tls", "keepalive" }) do
+for _, name in ipairs({ "echo", "close", "server", "errors", "timers", "tls", "keepalive", "events" }) do
   require("tests." .. name)
 end
 os.exit(H.report() and 0 or 1)

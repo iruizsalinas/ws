@@ -61,6 +61,16 @@ function Socket:on(name, fn)
   return self
 end
 
+function Socket:once(name, fn)
+  emitter.once(self, EVENTS, name, fn)
+  return self
+end
+
+function Socket:off(name, fn)
+  emitter.off(self, EVENTS, name, fn)
+  return self
+end
+
 -- Text by default; pass `true` to send binary.
 function Socket:send(data, binary)
   if type(data) ~= "string" then
