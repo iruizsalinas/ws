@@ -78,7 +78,7 @@ jobs:
       - name: Run
         run: |
           python .github/scripts/lua.py 5.4
-          .build/lua/5.4/bin/lua scripts/build.lua .build/lua/5.4/include
+          .build/lua/5.4/bin/lua scripts/build.lua
           python .github/scripts/autobahn.py --lua .build/lua/5.4/bin/lua
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: failure()
@@ -86,8 +86,10 @@ jobs:
           name: autobahn
           path: .build/autobahn/
 
+  # One module per platform serves every Lua version, so each job builds it
+  # once and tests it with all of them.
   linux:
-    name: linux-${{ matrix.arch }} / Lua ${{ matrix.lua }}
+    name: linux-${{ matrix.arch }}
     runs-on: ${{ matrix.arch == 'aarch64' && 'ubuntu-22.04-arm' || 'ubuntu-22.04' }}
     # Built against glibc 2.28, so the bundles load on RHEL 8, Debian 10,
     # Ubuntu 18.10 and anything newer.
@@ -98,7 +100,6 @@ jobs:
       fail-fast: false
       matrix:
         arch: [x86_64, aarch64]
-        lua: ['5.1', '5.2', '5.3', '5.4', '5.5']
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
       - name: Toolchain
@@ -107,21 +108,20 @@ jobs:
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
           echo /opt/python/cp313-cp313/bin >> "$GITHUB_PATH"
       - name: Build and test
-        run: sh .github/scripts/bundle.sh '${{ matrix.lua }}'
+        run: sh .github/scripts/bundle.sh
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: bundle-linux-${{ matrix.arch }}-${{ matrix.lua }}
+          name: bundle-linux-${{ matrix.arch }}
           path: bundles/
           if-no-files-found: error
 
   bundle:
-    name: ${{ matrix.os }} / Lua ${{ matrix.lua }}
+    name: ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [macos-15-intel, macos-15, windows-2022]
-        lua: ['5.1', '5.2', '5.3', '5.4', '5.5']
     env:
       MACOSX_DEPLOYMENT_TARGET: '11.0'
     steps:
@@ -144,7 +144,7 @@ jobs:
             curl -sSf --retry 5 --retry-connrefused https://sh.rustup.rs | sh -s -- -y --profile minimal
             export PATH="$HOME/.cargo/bin:$PATH"
           fi
-          sh .github/scripts/bundle.sh '${{ matrix.lua }}'
+          sh .github/scripts/bundle.sh
       - name: Build and test (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -157,20 +157,25 @@ jobs:
           $env:PATH = "$env:MSYS2_LOCATION\mingw64\bin;" + $env:PATH
           rustup toolchain install stable-x86_64-pc-windows-gnu --profile minimal
           $env:RUSTUP_TOOLCHAIN = 'stable-x86_64-pc-windows-gnu'
-          $v = '${{ matrix.lua }}'
-          python .github/scripts/lua.py $v
-          $dir = (Resolve-Path ".build").Path + "\lua\$v"
-          $lua = "$dir\bin\lua.exe"
-          & $lua scripts/build.lua "$dir\include" "$dir\bin\lua$($v -replace '\.', '').dll"
-          & $lua tests/run.lua
-          New-Item -ItemType Directory -Force "bundles/win32-x86_64/$v" | Out-Null
-          Move-Item ws/core.dll "bundles/win32-x86_64/$v/core.dll"
-          python .github/scripts/luarocks.py $v
+          $versions = '5.1', '5.2', '5.3', '5.4', '5.5'
+          $build = Join-Path (Get-Location).Path ".build"
+          foreach ($v in $versions) { python .github/scripts/lua.py $v }
+          & "$build\lua\5.4\bin\lua.exe" scripts/build.lua
+          foreach ($v in $versions) {
+            Write-Output "== Lua $v"
+            & "$build\lua\$v\bin\lua.exe" tests/run.lua
+          }
+          New-Item -ItemType Directory -Force "bundles/win32-x86_64" | Out-Null
+          Move-Item ws/core.dll "bundles/win32-x86_64/core.dll"
+          python .github/scripts/luarocks.py 5.4
           python .github/scripts/package.py --partial
-          python .github/scripts/install.py --lua $lua --luarocks .build/luarocks/luarocks-3.13.0-windows-64/luarocks.exe
+          foreach ($v in $versions) {
+            Write-Output "== Installed into Lua $v"
+            python .github/scripts/install.py --lua "$build\lua\$v\bin\lua.exe" --luarocks .build/luarocks/luarocks-3.13.0-windows-64/luarocks.exe
+          }
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: bundle-${{ matrix.os }}-${{ matrix.lua }}
+          name: bundle-${{ matrix.os }}
           path: bundles/
           if-no-files-found: error
 
@@ -183,27 +188,25 @@ jobs:
       matrix:
         include:
           - os: ubuntu-22.04
-            bundle: bundle-linux-x86_64-5.1
+            bundle: bundle-linux-x86_64
           - os: macos-15
-            bundle: bundle-macos-15-5.1
+            bundle: bundle-macos-15
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
       - name: Install LuaJIT
         run: |
-          if [ "$RUNNER_OS" = Linux ]; then sudo apt-get install -y luajit libluajit-5.1-dev; else brew install luajit; fi
+          if [ "$RUNNER_OS" = Linux ]; then sudo apt-get install -y luajit; else brew install luajit; fi
       - name: Build from source and test
         run: |
-          if [ "$RUNNER_OS" = Linux ]; then include=/usr/include/luajit-2.1; else include="$(brew --prefix luajit)/include/luajit-2.1"; fi
-          luajit scripts/build.lua "$include"
+          luajit scripts/build.lua
           luajit tests/run.lua
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: ${{ matrix.bundle }}
           path: bundles
-      # LuaJIT uses the Lua 5.1 ABI, so the rock ships it the 5.1 module.
-      - name: Test the prebuilt Lua 5.1 module
+      - name: Test the prebuilt module
         run: |
-          cp bundles/*/5.1/core.so ws/core.so
+          cp bundles/*/core.so ws/core.so
           luajit tests/run.lua
 
   assemble:

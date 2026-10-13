@@ -1,5 +1,6 @@
-"""Assembles the release: a source archive carrying every prebuilt module,
-packed into a LuaRocks source rock. Installing it only copies files.
+"""Assembles the release: a source archive carrying every platform's
+prebuilt module, packed into a LuaRocks source rock. Installing it only
+copies files.
 
   python .github/scripts/package.py [--partial]
 
@@ -15,9 +16,11 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[2]
 PLATFORMS = ["linux-x86_64", "linux-arm64", "macosx-x86_64", "macosx-arm64", "win32-x86_64"]
-VERSIONS = ["5.1", "5.2", "5.3", "5.4", "5.5"]
 SOURCES = ["ws", "scripts", "bundles", "core", "native", "tests"]
 FILES = ["Cargo.toml", "Cargo.lock", "README.md", "LICENSE"]
+# luarocks.org refuses request bodies over 15 MiB (nginx client_max_body_size
+# 15m); the rest leaves room for the upload's multipart encoding.
+MAX_ROCK = 15 * 1024 * 1024 - 64 * 1024
 
 
 def rockspec():
@@ -28,11 +31,9 @@ def rockspec():
 
 def check_bundles(partial):
     for target in PLATFORMS:
-        for version in VERSIONS:
-            name = "core.dll" if target.startswith("win32") else "core.so"
-            path = ROOT / "bundles" / target / version / name
-            if not path.is_file() and not partial:
-                raise SystemExit(f"missing bundle {target}/Lua {version}; run the full build matrix")
+        name = "core.dll" if target.startswith("win32") else "core.so"
+        if not (ROOT / "bundles" / target / name).is_file() and not partial:
+            raise SystemExit(f"missing bundle for {target}; run the full build matrix")
 
 
 def package(partial):
@@ -59,7 +60,10 @@ def package(partial):
     with zipfile.ZipFile(rock, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.write(spec, spec.name)
         zf.write(archive, archive.name)
-    sums = "".join(f"{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.name}\n" for p in [archive, rock])
+    size = rock.stat().st_size
+    if size > MAX_ROCK:
+        raise SystemExit(f"{rock.name} is {size} bytes; luarocks.org accepts at most {MAX_ROCK}")
+    sums ="".join(f"{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.name}\n" for p in [archive, rock])
     (out / "SHA256SUMS").write_text(sums)
     print(rock)
 

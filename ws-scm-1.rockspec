@@ -13,7 +13,7 @@ description = {
 dependencies = { "lua >= 5.1, < 5.6" }
 build = {
   type = "command",
-  build_command = '"$(LUA)" scripts/native.lua "$(LUA_INCDIR)" "$(LUA_LIBDIR)" "$(LUA_BINDIR)" "$(LUALIB)"',
+  build_command = '"$(LUA)" scripts/native.lua',
   install = {
     lua = {
       ["ws"] = "ws/init.lua",

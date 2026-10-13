@@ -6,7 +6,7 @@ mod ffi;
 mod hub;
 mod server;
 
-#[cfg(glue)]
+#[cfg(all(glue, not(windows)))]
 mod glue {
     use std::ffi::{c_int, c_void};
 
@@ -15,7 +15,8 @@ mod glue {
     }
 
     /// `require("ws.core")`. Exported from Rust so the symbol survives the
-    /// linker's export list; the C glue builds the module table.
+    /// linker's export list; the C glue builds the module table. On Windows
+    /// ws.c exports it instead.
     #[unsafe(no_mangle)]
     pub extern "C" fn luaopen_ws_core(lua: *mut c_void) -> c_int {
         // SAFETY: Lua calls this with a valid state, which is all ws_open needs.

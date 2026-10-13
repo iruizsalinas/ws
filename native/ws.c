@@ -1,15 +1,36 @@
 /* The `ws.core` Lua module: converts values between Lua and the Rust ABI
- * (ws.h) and nothing more. It keeps no state and never calls into Lua, so
- * a Lua error can only unwind through this file. The API lives in ws/. */
-#include <lauxlib.h>
-#include <lua.h>
-
+ * (ws.h) and nothing more. It never calls into Lua, so a Lua error can only
+ * unwind through this file. The API lives in ws/.
+ *
+ * One build serves every Lua version (see luaapi.h). On Windows a DLL would
+ * be tied to one Lua DLL name, so the API is looked up at load time in the
+ * module that called luaopen_ws_core. */
+#include "luaapi.h"
 #include "ws.h"
 
-#if LUA_VERSION_NUM == 501
-#define newlib(L, f) (lua_newtable(L), luaL_register(L, NULL, f))
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+
+#define X(ret, name, args) static ret(*name) args;
+WS_LUA_API(X)
+#undef X
+
+static INIT_ONCE once = INIT_ONCE_STATIC_INIT;
+
+static BOOL CALLBACK bind_api(PINIT_ONCE o, PVOID lua, PVOID *bound) {
+    (void)o;
+#define X(ret, name, args) \
+    if (!(name = (ret(*) args)(void (*)(void))GetProcAddress(lua, #name))) return FALSE;
+    WS_LUA_API(X)
+#undef X
+    *bound = lua;
+    return TRUE;
+}
 #else
-#define newlib(L, f) luaL_newlib(L, f)
+#define X(ret, name, args) ret name args;
+WS_LUA_API(X)
+#undef X
 #endif
 
 static const char *const KINDS[] = {
@@ -165,15 +186,51 @@ static int l_buffered(lua_State *L) {
     return 1;
 }
 
-static const luaL_Reg FUNCS[] = {
-    {"hub", l_hub},         {"now", l_now},         {"wait", l_wait},   {"connect", l_connect},
-    {"listen", l_listen},   {"port", l_port},       {"unlisten", l_unlisten}, {"reply", l_reply},
-    {"send", l_send},       {"ping", l_ping},       {"close", l_close}, {"terminate", l_terminate},
-    {"state", l_state},     {"protocol", l_protocol}, {"buffered", l_buffered}, {NULL, NULL},
+static const struct {
+    const char *name;
+    lua_CFunction fn;
+} FUNCS[] = {
+    {"hub", l_hub},       {"now", l_now},           {"wait", l_wait},         {"connect", l_connect},
+    {"listen", l_listen}, {"port", l_port},         {"unlisten", l_unlisten}, {"reply", l_reply},
+    {"send", l_send},     {"ping", l_ping},         {"close", l_close},       {"terminate", l_terminate},
+    {"state", l_state},   {"protocol", l_protocol}, {"buffered", l_buffered},
 };
 
-/* Called from luaopen_ws_core, which Rust exports. */
+/* Whether lua_Integer is 64 bits, as luaapi.h assumes: a narrower one
+ * truncates 2^40. Read back as a string because calls involving lua_Number
+ * are unsafe until its type is known (ws/loop.lua checks that, in Lua). */
+static int wide_integers(lua_State *L) {
+    lua_pushinteger(L, (lua_Integer)1 << 40);
+    const char *s = luaL_checklstring(L, -1, NULL), *want = "1099511627776";
+    while (*s && *s == *want) s++, want++;
+    lua_settop(L, -2);
+    return *s == *want;
+}
+
 int ws_open(lua_State *L) {
-    newlib(L, FUNCS);
+    if (!wide_integers(L)) {
+        lua_pushstring(L, "ws.core needs a Lua with 64-bit integers");
+        return lua_error(L);
+    }
+    int n = (int)(sizeof FUNCS / sizeof FUNCS[0]);
+    lua_createtable(L, 0, n);
+    for (int i = 0; i < n; i++) {
+        lua_pushcclosure(L, FUNCS[i].fn, 0);
+        lua_setfield(L, -2, FUNCS[i].name);
+    }
     return 1;
 }
+
+#ifdef _WIN32
+/* Exported from C, not Rust, so the return address is in the Lua runtime.
+ * Without its API, or when bound to another runtime, this returns nothing
+ * and ws/loop.lua reports it: those pointers must never see this state. */
+__declspec(dllexport) int luaopen_ws_core(lua_State *L) {
+    DWORD flags = GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT;
+    HMODULE lua;
+    PVOID bound;
+    if (!GetModuleHandleExA(flags, (LPCSTR)__builtin_return_address(0), &lua)) return 0;
+    if (!InitOnceExecuteOnce(&once, bind_api, lua, &bound) || bound != lua) return 0;
+    return ws_open(L);
+}
+#endif

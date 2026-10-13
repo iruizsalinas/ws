@@ -1,68 +1,35 @@
--- Builds the native module for the Lua running this script.
+-- Builds ws/core.so (ws/core.dll on Windows), which serves every Lua version.
 --
---   lua scripts/build.lua <lua include dir> [lua library] [output]
+--   lua scripts/build.lua
 --
--- The library (the Lua DLL) is required on Windows only. The output
--- defaults to ws/core.so, or ws/core.dll on Windows. Needs cargo and a C
--- compiler; on Windows, the x86_64-pc-windows-gnu target and MinGW gcc.
+-- Needs cargo and a C compiler; on Windows, the x86_64-pc-windows-gnu target
+-- and MinGW gcc.
 local windows = package.config:sub(1, 1) == "\\"
-local include, library, output = arg[1], arg[2], arg[3]
-assert(include, "usage: lua scripts/build.lua <lua include dir> [lua library] [output]")
-assert(not windows or library, "on Windows, pass the Lua DLL to link against")
+local cmd = (windows and 'set "WS_GLUE=1" && ' or "WS_GLUE=1 ")
+  .. "cargo build --release --locked -p ws-native --message-format=json-render-diagnostics"
+  .. (windows and " --target x86_64-pc-windows-gnu" or "")
+print("+ " .. cmd)
 
--- Cargo runs build scripts from the crate folder, so pass absolute paths.
-local function absolute(path)
-  if not path or path:find("^/") or path:find("^%a:[/\\]") or path:find("^\\\\") then
-    return path
-  end
-  local cwd = windows and io.popen("cd"):read("*l") or os.getenv("PWD")
-  return cwd .. (windows and "\\" or "/") .. path
-end
-include, library = absolute(include), absolute(library)
-
-local function quote(s)
-  if windows then
-    assert(not s:find('["%%!]'), "unsupported characters in path: " .. s)
-    return '"' .. s .. '"'
-  end
-  return "'" .. s:gsub("'", "'\\''") .. "'"
-end
-
-local function env(name, value)
-  if windows then
-    return 'set "' .. name .. "=" .. value .. '" && '
-  end
-  return name .. "=" .. quote(value) .. " "
-end
-
-local function run(cmd)
-  print("+ " .. cmd)
-  local ok, _, code = os.execute(cmd)
-  assert(ok == true or ok == 0, "command failed (" .. tostring(code) .. ")")
-end
-
-local target = windows and "x86_64-pc-windows-gnu" or nil
-local cmd = env("LUA_INCDIR", include) .. (library and env("LUA_LIB", library) or "")
-cmd = cmd .. "cargo build --release --locked -p ws-native" .. (target and (" --target " .. target) or "")
-run(cmd)
-
-local dir = "target/" .. (target and (target .. "/") or "") .. "release/"
+-- Cargo reports where it put the library, wherever its target dir is.
+local pipe = assert(io.popen(cmd))
 local built
-for _, name in ipairs({ "ws_native.dll", "libws_native.so", "libws_native.dylib" }) do
-  local f = io.open(dir .. name, "rb")
-  if f then
-    f:close()
-    built = dir .. name
-    break
+for line in pipe:lines() do
+  if line:find('"reason":"compiler-artifact"', 1, true) and line:find('"name":"ws_native"', 1, true) then
+    for name in (line:match('"filenames":%[(.-)%]') or ""):gmatch('"(.-)"') do
+      local path = name:gsub("\\\\", "\\")
+      if path:match("%.dll$") or path:match("%.so$") or path:match("%.dylib$") then built = path end
+    end
   end
 end
-assert(built, "cargo produced no library in " .. dir)
+-- Lua 5.1 and LuaJIT do not report the exit status; a failed build still
+-- reports no library.
+assert(pipe:close() and built, "cargo build failed")
 
-output = output or (windows and "ws/core.dll" or "ws/core.so")
+local output = windows and "ws/core.dll" or "ws/core.so"
 local input = assert(io.open(built, "rb"))
 local bytes = input:read("*a")
 input:close()
 local out = assert(io.open(output, "wb"))
 assert(out:write(bytes))
 assert(out:close())
-print("built " .. output)
+print("built " .. output .. " from " .. built)

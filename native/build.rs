@@ -1,25 +1,22 @@
-//! Compiles the Lua glue (ws.c) with the system C compiler.
-//!
-//! LUA_INCDIR points at the Lua headers; on Windows LUA_LIB names the Lua
-//! DLL (or its import library) to link against. Without LUA_INCDIR only the
-//! ABI is built, which keeps `cargo check` and `cargo clippy` working.
+//! Compiles the Lua glue (ws.c) with the system C compiler when WS_GLUE=1
+//! (scripts/build.lua sets it). Without it only the Rust ABI is built, so
+//! `cargo check`, `clippy` and `test` need no C compiler.
 
 use std::env;
 use std::path::PathBuf;
 use std::process::Command;
 
 fn main() {
-    for path in ["ws.c", "ws.h"] {
+    for path in ["ws.c", "ws.h", "luaapi.h"] {
         println!("cargo::rerun-if-changed={path}");
     }
-    for var in ["LUA_INCDIR", "LUA_LIB", "CC"] {
+    for var in ["WS_GLUE", "CC"] {
         println!("cargo::rerun-if-env-changed={var}");
     }
     println!("cargo::rustc-check-cfg=cfg(glue)");
-    let Ok(include) = env::var("LUA_INCDIR") else {
-        println!("cargo::warning=LUA_INCDIR is not set; building without the Lua glue");
+    if env::var("WS_GLUE").as_deref() != Ok("1") {
         return;
-    };
+    }
     let windows = env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows");
     let macos = env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos");
     let object = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR")).join("ws.o");
@@ -29,7 +26,7 @@ fn main() {
     if !windows {
         cmd.arg("-fPIC");
     }
-    cmd.arg(format!("-I{include}")).arg("ws.c").arg("-o").arg(&object);
+    cmd.arg("ws.c").arg("-o").arg(&object);
     let status = cmd.status().unwrap_or_else(|e| panic!("cannot run {cc}: {e}"));
     assert!(status.success(), "compiling ws.c failed");
     println!("cargo::rustc-link-arg={}", object.display());
@@ -39,8 +36,7 @@ fn main() {
         println!("cargo::rustc-link-arg=dynamic_lookup");
     }
     if windows {
-        let lib = env::var("LUA_LIB").expect("LUA_LIB must name the Lua DLL on Windows");
-        println!("cargo::rustc-link-arg={lib}");
+        println!("cargo::rustc-link-arg=-lkernel32");
     }
     println!("cargo::rustc-cfg=glue");
 }

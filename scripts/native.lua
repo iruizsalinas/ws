@@ -1,13 +1,13 @@
 -- LuaRocks build step: puts the native module at ws/core.so (ws/core.dll on
--- Windows). Uses the prebuilt binary for this platform when it loads in the
--- running Lua; otherwise builds from source, which needs Rust (rustup.rs).
---
---   lua scripts/native.lua <LUA_INCDIR> <LUA_LIBDIR> <LUA_BINDIR> <LUALIB>
-local incdir, libdir, bindir, lualib = arg[1], arg[2], arg[3], arg[4]
+-- Windows). Uses this platform's prebuilt binary when it loads; otherwise
+-- builds from source, which needs Rust (rustup.rs) and a C compiler.
 local windows = package.config:sub(1, 1) == "\\"
 local output = windows and "ws/core.dll" or "ws/core.so"
--- LuaJIT speaks the Lua 5.1 ABI.
-local version = assert(_VERSION:match("Lua (%d+%.%d+)"))
+
+-- As in ws/loop.lua; neither the prebuilt module nor a build from source
+-- serves other number types, and running the module there may crash.
+assert(2 ^ 53 + 1 == 2 ^ 53 and 2 ^ 24 + 1 ~= 2 ^ 24 and (math.maxinteger or 2 ^ 63) > 2 ^ 62,
+  "ws needs a Lua with 64-bit integers and double numbers")
 
 local function platform()
   if windows then
@@ -41,18 +41,28 @@ local function copy(from, to)
   return true
 end
 
-local target = platform()
-if target and copy("bundles/" .. target .. "/" .. version .. "/" .. (windows and "core.dll" or "core.so"), output) then
-  -- Loading verifies the Lua ABI and, on Windows, the Lua DLL name.
+-- Opens the module as require would: true; nil and why it does not load;
+-- or false and why it refused this Lua, which a rebuild cannot change.
+local function open()
   local loader, err = package.loadlib("./" .. output, "luaopen_ws_core")
-  if loader then
-    print("ws: using the prebuilt module for " .. target .. " / Lua " .. version)
+  if not loader then return nil, err end
+  local ok, core = pcall(loader, "ws.core")
+  if ok and type(core) == "table" then return true end
+  return false, ok and "ws.core cannot load into this Lua runtime" or tostring(core)
+end
+
+local target = platform()
+if target and copy("bundles/" .. target .. "/" .. (windows and "core.dll" or "core.so"), output) then
+  local ok, err = open()
+  if ok then
+    print("ws: using the prebuilt module for " .. target)
     return
   end
+  assert(ok == nil, "ws: " .. tostring(err))
   print("ws: the prebuilt module does not load here (" .. tostring(err) .. "); building from source")
   os.remove(output)
 else
-  print("ws: no prebuilt module for " .. tostring(target) .. " / Lua " .. version .. "; building from source")
+  print("ws: no prebuilt module for " .. tostring(target) .. "; building from source")
 end
 
 local cargo = io.popen("cargo --version 2>&1")
@@ -60,24 +70,11 @@ local found = cargo and (cargo:read("*a") or ""):find("^cargo") ~= nil
 if cargo then cargo:close() end
 assert(found, "ws: building from source needs Rust; install it from https://rustup.rs and retry")
 
-local library
-if windows then
-  for _, dir in ipairs({ bindir, libdir }) do
-    local f = dir and lualib and io.open(dir .. "\\" .. lualib, "rb")
-    if f then
-      f:close()
-      library = dir .. "\\" .. lualib
-      break
-    end
-  end
-  assert(library, "ws: cannot find the Lua library " .. tostring(lualib))
-end
 local lua = arg[-1] or "lua"
 local q = windows and '"' or "'"
-local cmd = q .. lua .. q .. " scripts/build.lua " .. q .. incdir .. q
-if library then
-  cmd = cmd .. " " .. q .. library .. q
-end
+local cmd = q .. lua .. q .. " scripts/build.lua"
 -- cmd.exe strips one pair of outer quotes from a command starting with one.
 local ok = os.execute(windows and ('"' .. cmd .. '"') or cmd)
 assert(ok == true or ok == 0, "ws: building the native module failed")
+local opened, err = open()
+assert(opened, "ws: the module built from source does not load: " .. tostring(err))
