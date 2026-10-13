@@ -9,17 +9,39 @@ fn provider() -> Arc<rustls::crypto::CryptoProvider> {
     Arc::new(rustls::crypto::ring::default_provider())
 }
 
-fn certs(path: &str) -> Result<Vec<CertificateDer<'static>>, String> {
-    let certs = CertificateDer::pem_file_iter(path)
-        .and_then(|it| it.collect::<Result<Vec<_>, _>>())
-        .map_err(|e| format!("cannot read certificates from {path}: {e}"))?;
-    if certs.is_empty() {
-        return Err(format!("no certificates in {path}"));
-    }
-    Ok(certs)
+/// PEM text itself, or the file it names. Anything with a PEM header or a
+/// line break is text, never a path, so errors name the file or just say
+/// "PEM text": never the text, which may hold a private key.
+struct Pem {
+    data: Vec<u8>,
+    name: String,
 }
 
-/// Client config trusting `ca` (a PEM file) or else Mozilla's root store.
+impl Pem {
+    fn load(source: &str) -> Result<Pem, String> {
+        if source.contains("-----BEGIN") || source.contains(['\n', '\r']) {
+            return Ok(Pem { data: source.as_bytes().to_vec(), name: "PEM text".into() });
+        }
+        let data = std::fs::read(source).map_err(|e| format!("cannot read {source}: {e}"))?;
+        Ok(Pem { data, name: source.to_string() })
+    }
+
+    fn certs(&self) -> Result<Vec<CertificateDer<'static>>, String> {
+        let certs = CertificateDer::pem_slice_iter(&self.data)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| format!("invalid certificates in {}: {e}", self.name))?;
+        if certs.is_empty() {
+            return Err(format!("no certificates in {}", self.name));
+        }
+        Ok(certs.into_iter().map(CertificateDer::into_owned).collect())
+    }
+
+    fn key(&self) -> Result<PrivateKeyDer<'static>, String> {
+        PrivateKeyDer::from_pem_slice(&self.data).map_err(|e| format!("invalid private key in {}: {e}", self.name))
+    }
+}
+
+/// Client config trusting `ca` (PEM text or a PEM file) or else Mozilla's roots.
 pub fn client(ca: Option<&str>) -> Result<Arc<ClientConfig>, String> {
     static DEFAULT: OnceLock<Arc<ClientConfig>> = OnceLock::new();
     let build = |roots: RootCertStore| -> Result<Arc<ClientConfig>, String> {
@@ -31,10 +53,11 @@ pub fn client(ca: Option<&str>) -> Result<Arc<ClientConfig>, String> {
         Ok(Arc::new(config))
     };
     match ca {
-        Some(path) => {
+        Some(ca) => {
+            let pem = Pem::load(ca)?;
             let mut roots = RootCertStore::empty();
-            for cert in certs(path)? {
-                roots.add(cert).map_err(|e| format!("invalid CA certificate in {path}: {e}"))?;
+            for cert in pem.certs()? {
+                roots.add(cert).map_err(|e| format!("invalid CA certificate in {}: {e}", pem.name))?;
             }
             build(roots)
         }
@@ -47,10 +70,11 @@ pub fn client(ca: Option<&str>) -> Result<Arc<ClientConfig>, String> {
     }
 }
 
-/// Server config from PEM certificate chain and private key files.
+/// Server config from a certificate chain and its private key, each PEM
+/// text or a PEM file.
 pub fn server(cert: &str, key: &str) -> Result<Arc<ServerConfig>, String> {
-    let chain = certs(cert)?;
-    let key = PrivateKeyDer::from_pem_file(key).map_err(|e| format!("cannot read private key from {key}: {e}"))?;
+    let chain = Pem::load(cert)?.certs()?;
+    let key = Pem::load(key)?.key()?;
     let config = ServerConfig::builder_with_provider(provider())
         .with_safe_default_protocol_versions()
         .map_err(|e| e.to_string())?

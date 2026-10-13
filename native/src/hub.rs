@@ -70,7 +70,7 @@ pub extern "C" fn ws_connect(
             let (name, value) = line.split_once(':').ok_or_else(|| fail(FATAL, "invalid header"))?;
             opts.headers.push((name.to_string(), value.to_string()));
         }
-        if let Some(ca) = ca.text("ca")? {
+        if let Some(ca) = ca.text("tls.ca")? {
             opts.tls = Some(tls::client(Some(ca)).map_err(|e| fail(FATAL, &e))?);
         }
         if timeout > 0.0 {

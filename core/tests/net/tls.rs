@@ -109,3 +109,24 @@ fn close_notify_does_not_discard_websocket_close_reply() {
     assert_eq!(bytes.len(), expected.len());
     assert_eq!(bytes, expected);
 }
+
+#[test]
+fn pem_text_is_accepted_and_never_echoed() {
+    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../tests/fixtures/tls/");
+    let read = |name: &str| std::fs::read_to_string(format!("{dir}{name}")).unwrap();
+    assert!(tls::server(&read("server.pem"), &read("server-key.pem")).is_ok());
+    assert!(tls::client(Some(&read("ca.pem"))).is_ok());
+    let secret = "c2VjcmV0LWtleS1tYXRlcmlhbA";
+    for bad in [
+        format!("-----BEGIN PRIVATE KEY-----\n{secret}\n-----END PRIVATE KEY-----\n"),
+        // Junk before the header, or no header at all, is still text, not a path.
+        format!("junk -----BEGIN PRIVATE KEY-----\n{secret}\n"),
+        format!("{secret}\n{secret}\n"),
+    ] {
+        let error = tls::server(&read("server.pem"), &bad).unwrap_err();
+        assert!(error.contains("PEM text") && !error.contains(secret), "{error}");
+    }
+    // Paths are named in errors, so a typo is easy to spot.
+    let error = tls::client(Some("missing-ca.pem")).unwrap_err();
+    assert!(error.contains("missing-ca.pem"), "{error}");
+}

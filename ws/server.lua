@@ -7,8 +7,8 @@ local Socket = require("ws.socket")
 
 local EVENTS = { connection = true }
 local OPTIONS = {
-  port = "port", host = "string", protocols = "list", accept = "function", cert = "string", key = "string",
-  keepalive = "keepalive",
+  port = "port", host = "string", protocols = "list", accept = "function", keepalive = "keepalive",
+  tls = { cert = "string", key = "string" },
   limits = { message = "size", buffer = "size", connections = "size" },
 }
 
@@ -22,8 +22,11 @@ function Server.listen(arg)
   if o.port == nil then
     error("option 'port' is required", 2)
   end
-  local limits = o.limits or {}
-  local id, err = core.listen(loop.hub, o.host or "0.0.0.0", o.port, o.cert, o.key,
+  local limits, tls = o.limits or {}, o.tls or {}
+  if o.tls and not (tls.cert and tls.key) then
+    error("options 'tls.cert' and 'tls.key' go together", 2)
+  end
+  local id, err = core.listen(loop.hub, o.host or "0.0.0.0", o.port, tls.cert, tls.key,
     limits.message, limits.buffer, limits.connections, o.keepalive)
   if not id then
     error(err, 2)

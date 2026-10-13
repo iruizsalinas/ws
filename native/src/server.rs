@@ -34,10 +34,10 @@ pub extern "C" fn ws_listen(
         opts.max_message = size(max, opts.max_message);
         opts.max_buffer = size(buffer, opts.max_buffer);
         opts.keepalive = keepalive_from(keepalive, opts.keepalive);
-        opts.tls = match (cert.text("cert")?, key.text("key")?) {
+        opts.tls = match (cert.text("tls.cert")?, key.text("tls.key")?) {
             (Some(cert), Some(key)) => Some(tls::server(cert, key).map_err(|e| fail(FATAL, &e))?),
             (None, None) => None,
-            _ => return Err(fail(FATAL, "options 'cert' and 'key' go together")),
+            _ => return Err(fail(FATAL, "options 'tls.cert' and 'tls.key' go together")),
         };
         let server = hub.listen(opts).map_err(|e| fail(SOFT, &e.to_string()))?;
         let server_id = server.id();

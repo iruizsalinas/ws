@@ -59,6 +59,9 @@ pub(crate) fn connect(events: Events, id: Id, input: &str, opts: Options) -> Res
     for (name, value) in &opts.headers {
         http::check_header(name, value)?;
     }
+    if opts.tls.is_some() && !url.tls {
+        return Err("TLS settings need a wss:// URL".into());
+    }
     let tls = match url.tls {
         true => {
             let config = match &opts.tls {

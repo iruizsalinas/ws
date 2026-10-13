@@ -8,7 +8,8 @@ local EVENTS = {
   open = true, message = true, ping = true, pong = true, drain = true, close = true, error = true,
 }
 local OPTIONS = {
-  protocols = "list", headers = "headers", ca = "string", timeout = "seconds", keepalive = "keepalive",
+  protocols = "list", headers = "headers", timeout = "seconds", keepalive = "keepalive",
+  tls = { ca = "string" },
   limits = { message = "size", buffer = "size" },
 }
 
@@ -41,9 +42,14 @@ function Socket.connect(url, options)
     error("url must be a string", 2)
   end
   local o = opts.check(options, OPTIONS, 2)
+  local tls = o.tls or {}
+  if o.tls and not url:lower():find("^wss://") then
+    error("option 'tls' needs a wss:// URL", 2)
+  end
   local protocols = o.protocols and table.concat(o.protocols, "\n")
   local limits = o.limits or {}
-  local id, err = core.connect(loop.hub, url, protocols, o.headers, o.ca, o.timeout, limits.message, limits.buffer, o.keepalive)
+  local id, err = core.connect(loop.hub, url, protocols, o.headers, tls.ca, o.timeout,
+    limits.message, limits.buffer, o.keepalive)
   if not id then
     error(err, 2)
   end
