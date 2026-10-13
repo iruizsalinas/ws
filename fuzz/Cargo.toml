@@ -1,0 +1,29 @@
+[package]
+name = "ws-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+ws-core = { path = "../core" }
+
+# Kept out of the main workspace: fuzzing needs nightly and libFuzzer.
+[workspace]
+
+[[bin]]
+name = "reader"
+path = "targets/reader.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "handshake"
+path = "targets/handshake.rs"
+test = false
+doc = false
+bench = false

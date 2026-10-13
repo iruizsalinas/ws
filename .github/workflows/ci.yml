@@ -4,6 +4,9 @@ on:
   pull_request:
   workflow_dispatch:
   workflow_call:
+  # Weekly, so new advisories and toolchain changes surface without a push.
+  schedule:
+    - cron: '17 6 * * 1'
 permissions:
   contents: read
 jobs:
@@ -24,13 +27,100 @@ jobs:
       - name: Test
         run: cargo test --workspace --locked
 
+  msrv:
+    name: Rust 1.88 (minimum)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+      - name: Test
+        run: |
+          rustup toolchain install 1.88 --profile minimal
+          cargo +1.88 test --workspace --locked
+
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+      - name: Audit
+        run: |
+          cargo install cargo-audit --locked --version 0.22.2
+          cargo audit --deny unsound --deny yanked
+
+  fuzz:
+    name: Fuzz / ${{ matrix.target }}
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [reader, handshake]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+      - name: Fuzz
+        run: |
+          rustup toolchain install nightly --profile minimal
+          cargo install cargo-fuzz --locked --version 0.13.2
+          cargo +nightly fuzz run '${{ matrix.target }}' -- -max_total_time=60
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: failure()
+        with:
+          name: fuzz-${{ matrix.target }}
+          path: fuzz/artifacts/
+
+  autobahn:
+    name: Autobahn TestSuite
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.13'
+      - name: Run
+        run: |
+          python .github/scripts/lua.py 5.4
+          .build/lua/5.4/bin/lua scripts/build.lua .build/lua/5.4/include
+          python .github/scripts/autobahn.py --lua .build/lua/5.4/bin/lua
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: failure()
+        with:
+          name: autobahn
+          path: .build/autobahn/
+
+  linux:
+    name: linux-${{ matrix.arch }} / Lua ${{ matrix.lua }}
+    runs-on: ${{ matrix.arch == 'aarch64' && 'ubuntu-22.04-arm' || 'ubuntu-22.04' }}
+    # Built against glibc 2.28, so the bundles load on RHEL 8, Debian 10,
+    # Ubuntu 18.10 and anything newer.
+    container: ${{ matrix.arch == 'aarch64'
+      && 'quay.io/pypa/manylinux_2_28_aarch64:2026.10.03-1@sha256:f5f03dedf61b47d69d0742d36047db78adeee3bdb7a9910ff52304750ecf2514'
+      || 'quay.io/pypa/manylinux_2_28_x86_64:2026.10.03-1@sha256:39df0042d5cc900b085aa25a0659368b42a0006c54c474299b785b44c1b4ff82' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86_64, aarch64]
+        lua: ['5.1', '5.2', '5.3', '5.4', '5.5']
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+      - name: Toolchain
+        run: |
+          curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          echo /opt/python/cp313-cp313/bin >> "$GITHUB_PATH"
+      - name: Build and test
+        run: sh .github/scripts/bundle.sh '${{ matrix.lua }}'
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: bundle-linux-${{ matrix.arch }}-${{ matrix.lua }}
+          path: bundles/
+          if-no-files-found: error
+
   bundle:
     name: ${{ matrix.os }} / Lua ${{ matrix.lua }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, ubuntu-22.04-arm, macos-15-intel, macos-15, windows-2022]
+        os: [macos-15-intel, macos-15, windows-2022]
         lua: ['5.1', '5.2', '5.3', '5.4', '5.5']
     env:
       MACOSX_DEPLOYMENT_TARGET: '11.0'
@@ -39,13 +129,6 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: '3.13'
-      - name: Rust
-        shell: bash
-        run: |
-          if ! command -v rustup >/dev/null; then
-            curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
-            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-          fi
       - name: Windows toolchain
         id: msys2
         if: runner.os == 'Windows'
@@ -54,23 +137,14 @@ jobs:
           msystem: MINGW64
           update: true
           install: mingw-w64-x86_64-gcc
-      - name: Build and test (Unix)
-        if: runner.os != 'Windows'
-        shell: bash
+      - name: Build and test (macOS)
+        if: runner.os == 'macOS'
         run: |
-          v='${{ matrix.lua }}'
-          lua=".build/lua/$v/bin/lua"
-          python .github/scripts/lua.py "$v"
-          "$lua" scripts/build.lua ".build/lua/$v/include"
-          "$lua" tests/run.lua
-          os=$(uname -s | sed 's/Linux/linux/; s/Darwin/macosx/')
-          arch=$(uname -m | sed 's/aarch64/arm64/')
-          mkdir -p "bundles/$os-$arch/$v"
-          cp ws/core.so "bundles/$os-$arch/$v/core.so"
-          rm ws/core.so
-          python .github/scripts/luarocks.py "$v"
-          python .github/scripts/package.py --partial
-          python .github/scripts/install.py --lua "$lua" --luarocks .build/luarocks/bin/luarocks
+          if ! command -v rustup >/dev/null; then
+            curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+            export PATH="$HOME/.cargo/bin:$PATH"
+          fi
+          sh .github/scripts/bundle.sh '${{ matrix.lua }}'
       - name: Build and test (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -102,24 +176,38 @@ jobs:
 
   luajit:
     name: LuaJIT / ${{ matrix.os }}
+    needs: [linux, bundle]
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, macos-15]
+        include:
+          - os: ubuntu-22.04
+            bundle: bundle-linux-x86_64-5.1
+          - os: macos-15
+            bundle: bundle-macos-15-5.1
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
       - name: Install LuaJIT
         run: |
           if [ "$RUNNER_OS" = Linux ]; then sudo apt-get install -y luajit libluajit-5.1-dev; else brew install luajit; fi
-      - name: Build and test
+      - name: Build from source and test
         run: |
           if [ "$RUNNER_OS" = Linux ]; then include=/usr/include/luajit-2.1; else include="$(brew --prefix luajit)/include/luajit-2.1"; fi
           luajit scripts/build.lua "$include"
           luajit tests/run.lua
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ${{ matrix.bundle }}
+          path: bundles
+      # LuaJIT uses the Lua 5.1 ABI, so the rock ships it the 5.1 module.
+      - name: Test the prebuilt Lua 5.1 module
+        run: |
+          cp bundles/*/5.1/core.so ws/core.so
+          luajit tests/run.lua
 
   assemble:
-    needs: [rust, bundle, luajit]
+    needs: [rust, msrv, audit, fuzz, autobahn, linux, bundle, luajit]
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4

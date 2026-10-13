@@ -38,7 +38,8 @@ def build(version, cc="gcc", jobs=4):
         (out / folder).mkdir(parents=True, exist_ok=True)
     windows = os.name == "nt"
     system = platform.system()
-    flags = ["-O2", "-fPIC"]
+    # API checks turn C API misuse in the native glue into assertion failures.
+    flags = ["-O2", "-fPIC", "-DLUA_USE_APICHECK"]
     if windows:
         flags += ["-DLUA_BUILD_AS_DLL"]
     else:

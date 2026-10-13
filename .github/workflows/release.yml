@@ -31,7 +31,8 @@ jobs:
           python .github/scripts/luarocks.py 5.4
       - name: Tag the version
         run: |
-          spec=$(ls ws-*-1.rockspec | grep -v scm)
+          set -- ws-[0-9]*-1.rockspec
+          spec=$1
           version=${spec#ws-}
           version=${version%-1.rockspec}
           echo "SPEC=$spec" >> "$GITHUB_ENV"
