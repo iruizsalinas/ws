@@ -47,7 +47,13 @@ def test(kind, cc):
         link = objects + ["-lm"]
         link += ["-Wl,-export_dynamic"] if sys.platform == "darwin" else ["-Wl,-E", "-ldl"]
     subprocess.run([cc, *flags, str(source / "lua.c"), *link, "-o", str(exe)], check=True)
-    core = json.dumps(str(ROOT / "ws" / ("core.dll" if windows else "core.so")).replace("\\", "/"))
+    if kind == "LONGDOUBLE":
+        probe = [str(exe), "-e", "io.write(tostring(2^53+1==2^53))"]
+        if subprocess.run(probe, capture_output=True, text=True, check=True).stdout == "true":
+            # Some ABIs, such as Apple arm64, define long double as double.
+            print("Skipped LONGDOUBLE: long double is double on this platform", flush=True)
+            return
+    core =json.dumps(str(ROOT / "ws" / ("core.dll" if windows else "core.so")).replace("\\", "/"))
     expected = "64-bit integers" if kind == "INT" else "double numbers"
     code = (f'local loader = assert(package.loadlib({core}, "luaopen_ws_core")); '
             f'local ok, err = pcall(loader); assert(not ok and tostring(err):find("{expected}", 1, true), tostring(err))')
