@@ -24,10 +24,10 @@ H.test("text and binary echo", function()
   H.eq(c.state, "closed", "final state")
 end)
 
-H.test("large message", function()
-  local server = H.echo()
+H.test("large message within a raised limit", function()
+  local server = H.echo({ limit = 4 * 1024 * 1024 })
   local big = string.rep("0123456789", 200000)
-  local c = ws.connect(H.url(server))
+  local c = ws.connect(H.url(server), { limit = 4 * 1024 * 1024 })
   local echoed
   c:on("open", function() c:send(big, true) end)
   c:on("message", function(data) echoed = data; c:close() end)

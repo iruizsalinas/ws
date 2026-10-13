@@ -5,7 +5,7 @@ local loop = require("ws.loop")
 local opts = require("ws.opts")
 
 local EVENTS = { open = true, message = true, ping = true, pong = true, close = true, error = true }
-local OPTIONS = { protocols = "list", headers = "headers", ca = "string", timeout = "seconds", max_payload = "size" }
+local OPTIONS = { protocols = "list", headers = "headers", ca = "string", timeout = "seconds", limit = "size" }
 
 local Socket = {}
 
@@ -37,7 +37,7 @@ function Socket.connect(url, options)
   end
   local o = opts.check(options, OPTIONS, 2)
   local protocols = o.protocols and table.concat(o.protocols, "\n")
-  local id, err = core.connect(loop.hub, url, protocols, o.headers, o.ca, o.timeout, o.max_payload)
+  local id, err = core.connect(loop.hub, url, protocols, o.headers, o.ca, o.timeout, o.limit)
   if not id then
     error(err, 2)
   end

@@ -26,7 +26,7 @@ use std::time::Duration;
 pub type Id = u64;
 
 /// Default limit for a single message, in bytes.
-pub const MAX_PAYLOAD: usize = 16 << 20;
+pub const MAX_PAYLOAD: usize = 1 << 20;
 /// How often blocked readers wake to notice closes and deadlines.
 pub(crate) const TICK: Duration = Duration::from_secs(1);
 

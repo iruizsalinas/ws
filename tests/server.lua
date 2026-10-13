@@ -62,8 +62,8 @@ H.test("binding a busy port raises", function()
   first:close()
 end)
 
-H.test("max_payload closes with 1009", function()
-  local server = H.server({ max_payload = 1000 })
+H.test("limit closes with 1009", function()
+  local server = H.server({ limit = 1000 })
   local server_error
   server:on("connection", function(c)
     c:on("error", function(err) server_error = err end)

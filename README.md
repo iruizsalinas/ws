@@ -99,7 +99,7 @@ ws.run()
 | `headers` | `nil` | Extra request headers |
 | `ca` | `nil` | Path to a PEM file of trusted certificates |
 | `timeout` | `10` | Connection timeout in seconds |
-| `max_payload` | `16777216` | Maximum message size in bytes |
+| `limit` | `1048576` | Maximum message size in bytes (1 MiB) |
 
 ### Server Options
 
@@ -111,7 +111,7 @@ ws.run()
 | `accept` | `nil` | `function(req)` returning `true` to accept, or `false, status` to reject |
 | `cert` | `nil` | Path to a PEM certificate, to serve `wss://` |
 | `key` | `nil` | Path to the PEM private key |
-| `max_payload` | `16777216` | Maximum message size in bytes |
+| `limit` | `1048576` | Maximum message size in bytes (1 MiB) |
 
 ## License
 
