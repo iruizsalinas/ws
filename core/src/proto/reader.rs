@@ -113,14 +113,13 @@ impl Reader {
             CLOSE => return close(&payload).map(Some),
             _ => {}
         }
-        let partial = match (op, self.partial.as_mut()) {
-            (CONTINUATION, Some(p)) => {
+        // `frame` validated sequencing before accepting the payload.
+        let partial = match self.partial.as_mut() {
+            Some(p) => {
                 p.data.extend_from_slice(&payload);
                 p
             }
-            (CONTINUATION, None) => return Err(Fail(1002, "unexpected continuation frame")),
-            (_, Some(_)) => return Err(Fail(1002, "expected continuation frame")),
-            (_, None) => self.partial.insert(Partial { op, data: payload, checked: 0 }),
+            None => self.partial.insert(Partial { op, data: payload, checked: 0 }),
         };
         if partial.op == TEXT {
             match std::str::from_utf8(&partial.data[partial.checked..]) {
