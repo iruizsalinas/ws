@@ -1,68 +1,57 @@
--- LuaRocks build step: puts the native module at ws/core.so (ws/core.dll on
--- Windows). Installs and validates this platform's prebuilt binary.
+-- LuaRocks build step: select a bundled module with the system loader, then
+-- validate its Lua ABI before copying it. No compiler or CPU detection.
 local windows = package.config:sub(1, 1) == "\\"
-local output = windows and "ws/core.dll" or "ws/core.so"
+local filename = windows and "core.dll" or "core.so"
+local system = "Windows"
+if not windows then
+  local ok, pipe = pcall(io.popen, "uname -s")
+  system = ok and pipe and pipe:read("*l") or nil
+  if ok and pipe then pipe:close() end
+end
 
-local function platform()
-  if windows then
-    -- The running interpreter's PE header says whether it is x86_64.
-    local exe = io.open(arg[-1] or "", "rb")
-    if not exe then return nil end
-    exe:seek("set", 60)
-    local b = exe:read(4) or ""
-    local offset = (b:byte(1) or 0) + (b:byte(2) or 0) * 256 + (b:byte(3) or 0) * 65536
-    exe:seek("set", offset + 4)
-    local machine = exe:read(2)
-    exe:close()
-    return machine == "\100\134" and "win32-x86_64" or nil
+local targets = ({
+  Windows = { "win32-x86_64" },
+  Linux = { "linux-x86_64", "linux-arm64" },
+  Darwin = { "macosx-x86_64", "macosx-arm64" },
+})[system]
+if not targets then
+  error("ws: no prebuilt module for " .. (system or "this system") .. ". Supported systems: Linux, macOS and Windows.", 0)
+end
+
+local errors = {}
+for _, target in ipairs(targets) do
+  local path = "./bundles/" .. target .. "/" .. filename
+  local input = io.open(path, "rb")
+  if input then
+    -- The loader checks the running process's architecture, not the host CPU.
+    -- Probe each original path: a loaded DLL cannot be overwritten on Windows.
+    local loader, err = package.loadlib(path, "luaopen_ws_core")
+    if loader then
+      local ok, core = pcall(loader, "ws.core")
+      if not ok or type(core) ~= "table" then
+        input:close()
+        error("ws: the prebuilt module for " .. target .. " is not compatible with this Lua runtime: "
+          .. (ok and "the module did not return a table" or tostring(core)), 0)
+      end
+      local bytes = input:read("*a")
+      input:close()
+      assert(bytes, "ws: cannot read the prebuilt module for " .. target)
+      local out = assert(io.open("ws/" .. filename, "wb"))
+      assert(out:write(bytes))
+      assert(out:close())
+      return
+    end
+    input:close()
+    errors[#errors + 1] = target .. ": " .. tostring(err):gsub("[%s%.]+$", "")
   end
-  local pipe = io.popen("uname -sm")
-  local os_name, arch = (pipe and pipe:read("*l") or ""):match("^(%S+)%s+(%S+)")
-  if pipe then pipe:close() end
-  arch = ({ aarch64 = "arm64", amd64 = "x86_64" })[arch] or arch
-  local name = ({ Linux = "linux", Darwin = "macosx" })[os_name]
-  if name and (arch == "x86_64" or arch == "arm64") then return name .. "-" .. arch end
 end
 
-local function copy(from, to)
-  local input = io.open(from, "rb")
-  if not input then return false end
-  local bytes = input:read("*a")
-  input:close()
-  local out = assert(io.open(to, "wb"))
-  assert(out:write(bytes))
-  assert(out:close())
-  return true
-end
-
--- Opens the module as require would, including its runtime checks. On
--- failure, also returns whether the system loader refused the file.
-local function open()
-  local loader, err = package.loadlib("./" .. output, "luaopen_ws_core")
-  if not loader then return false, err, true end
-  local ok, core = pcall(loader, "ws.core")
-  if ok and type(core) == "table" then return true end
-  return false, ok and "it is not compatible with this Lua runtime" or tostring(core)
-end
-
--- What the system needs when it refuses a prebuilt module.
-local NEEDS = { linux = "glibc 2.28 or newer", macosx = "macOS 11 or newer" }
-
-local target = platform()
-if not target then
-  error("ws: no prebuilt module for this platform. Supported platforms: "
-    .. "linux-x86_64, linux-arm64, macosx-x86_64, macosx-arm64, win32-x86_64.", 0)
-end
-if not copy("bundles/" .. target .. "/" .. (windows and "core.dll" or "core.so"), output) then
-  error("ws: the prebuilt module for " .. target .. " is missing from this package. "
+if #errors == 0 then
+  error("ws: the prebuilt modules are missing from this package. "
     .. "Install the release from LuaRocks instead: luarocks install ws", 0)
 end
-local ok, err, system = open()
-if not ok then
-  os.remove(output)
-  -- Windows system messages end in a period and a line break.
-  local reason = tostring(err):gsub("[%s%.]+$", "")
-  local needs = system and NEEDS[target:match("^[^-]+")]
-  error("ws: the prebuilt module for " .. target .. " failed to load: " .. reason
-    .. (needs and (". It needs " .. needs .. ".") or ""), 0)
-end
+local needs = ({ Linux = "an x86_64 or ARM64 Lua and glibc 2.28 or newer (musl is not supported)",
+  Darwin = "an Intel or Apple Silicon Lua and macOS 11 or newer",
+  Windows = "an x86_64 Lua" })[system]
+error("ws: no prebuilt module could be loaded. It needs " .. needs .. ".\n"
+  .. table.concat(errors, "\n"), 0)
