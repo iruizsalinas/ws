@@ -26,8 +26,15 @@ void *ws_set_copy_context(void *p) {
     return previous;
 }
 typedef void *(*Allocator)(void *, void *, size_t, size_t);
-static lua_State *(*newstate)(Allocator, void *);
+static lua_State *(*newstate)(void);
+static Allocator (*getallocf)(lua_State *, void **);
+static void (*setallocf)(lua_State *, Allocator, void *);
 static void (*close_state)(lua_State *);
+
+struct Allocation {
+    Allocator original;
+    void *ud;
+};
 
 static ws_str owned(const char *text, size_t len) {
     char *p = malloc(len);
@@ -44,10 +51,9 @@ void ws_free(ws_str s) {
 ws_str ws_error(void) { return owned("e", 1); }
 
 static void *allocate(void *ud, void *p, size_t old, size_t size) {
-    (void)ud;
-    if (!size) { free(p); return NULL; }
-    if (fail_growth && (!p || size > old)) return NULL;
-    return realloc(p, size);
+    struct Allocation *allocation = ud;
+    if (fail_growth && size && (!p || size > old)) return NULL;
+    return allocation->original(allocation->ud, p, old, size);
 }
 
 static void interrupted_copy(lua_State *L, const char *p, size_t n) {
@@ -79,8 +85,14 @@ static int convert(lua_State *L) {
 }
 
 static void test(int interrupted) {
-    lua_State *L = newstate(allocate, NULL);
+    /* Non-GC64 LuaJIT requires its own allocator and luaL_newstate.
+     * Wrap that allocator instead of replacing it with malloc/realloc. */
+    lua_State *L = newstate();
     assert(L);
+    struct Allocation allocation;
+    allocation.original = getallocf(L, &allocation.ud);
+    assert(allocation.original);
+    setallocf(L, allocate, &allocation);
     lua_pushcclosure(L, convert, 0);
     mode = interrupted;
     int rc = ws_pcall(L, 0, 1);
@@ -102,6 +114,7 @@ static void test(int interrupted) {
     lua_settop(L, 0);
     lua_pushcclosure(L, copy_str, 0);
     assert(ws_pcall(L, 0, 1) != 0); /* escaped private function is safe */
+    setallocf(L, allocation.original, allocation.ud);
     close_state(L);
 }
 
@@ -119,9 +132,11 @@ int luaopen_ws_strings(lua_State *L) {
 #define SYMBOL(name) ((void (*)(void))dlsym(RTLD_DEFAULT, name))
 #endif
     assert(ws_bind_api(runtime));
-    newstate = (lua_State *(*)(Allocator, void *))SYMBOL("lua_newstate");
+    newstate = (lua_State *(*)(void))SYMBOL("luaL_newstate");
+    getallocf = (Allocator (*)(lua_State *, void **))SYMBOL("lua_getallocf");
+    setallocf = (void (*)(lua_State *, Allocator, void *))SYMBOL("lua_setallocf");
     close_state = (void (*)(lua_State *))SYMBOL("lua_close");
-    assert(newstate && close_state);
+    assert(newstate && getallocf && setallocf && close_state);
     for (int i = 0; i < 4; i++) test(i);
     lua_pushboolean(L, 1);
     return 1;
