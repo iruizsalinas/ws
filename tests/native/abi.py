@@ -54,7 +54,7 @@ def test(kind, cc):
             print("Skipped LONGDOUBLE: long double is double on this platform", flush=True)
             return
     core =json.dumps(str(ROOT / "ws" / ("core.dll" if windows else "core.so")).replace("\\", "/"))
-    expected = "64-bit integers" if kind == "INT" else "double numbers"
+    expected = "64-bit integers" if kind == "INT" else "double-precision numbers"
     code = (f'local loader = assert(package.loadlib({core}, "luaopen_ws_core")); '
             f'local ok, err = pcall(loader); assert(not ok and tostring(err):find("{expected}", 1, true), tostring(err))')
     subprocess.run([str(exe), "-e", code], cwd=ROOT, check=True)
