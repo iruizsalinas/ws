@@ -16,15 +16,15 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[2]
 PLATFORMS = ["linux-x86_64", "linux-arm64", "macosx-x86_64", "macosx-arm64", "win32-x86_64"]
-SOURCES = ["ws", "scripts", "bundles", "core", "native", "tests"]
-FILES = ["Cargo.toml", "Cargo.lock", "README.md", "LICENSE"]
+SOURCES = ["ws", "bundles"]
+FILES = ["scripts/native.lua", "README.md", "LICENSE"]
 # luarocks.org refuses request bodies over 15 MiB (nginx client_max_body_size
 # 15m); the rest leaves room for the upload's multipart encoding.
 MAX_ROCK = 15 * 1024 * 1024 - 64 * 1024
 
 
 def rockspec():
-    specs = [p for p in ROOT.glob("ws-*-1.rockspec") if "scm" not in p.name]
+    specs = list(ROOT.glob("ws-[0-9]*-1.rockspec"))
     assert len(specs) == 1, "expected exactly one release rockspec"
     return specs[0], specs[0].name[len("ws-"):-len("-1.rockspec")]
 
@@ -50,6 +50,7 @@ def package(partial):
     for local in ["core.so", "core.dll"]:
         (stage / "ws" / local).unlink(missing_ok=True)
     for name in FILES + [spec.name]:
+        (stage / name).parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / name, stage / name)
     # The archive name and folder match the rockspec's source url and dir.
     archive = out / f"v{version}.tar.gz"

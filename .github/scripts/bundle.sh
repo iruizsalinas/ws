@@ -12,6 +12,7 @@ done
 .build/lua/5.4/bin/lua scripts/build.lua
 for v in $versions; do
   echo "== Lua $v"
+  ".build/lua/$v/bin/lua" tests/native/install.lua
   ".build/lua/$v/bin/lua" tests/run.lua
   python tests/native/strings.py --lua ".build/lua/$v/bin/lua"
 done

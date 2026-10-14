@@ -1,13 +1,7 @@
 -- LuaRocks build step: puts the native module at ws/core.so (ws/core.dll on
--- Windows). Uses this platform's prebuilt binary when it loads; otherwise
--- builds from source, which needs Rust (rustup.rs) and a C compiler.
+-- Windows). Installs and validates this platform's prebuilt binary.
 local windows = package.config:sub(1, 1) == "\\"
 local output = windows and "ws/core.dll" or "ws/core.so"
-
--- As in ws/loop.lua; neither the prebuilt module nor a build from source
--- serves other number types, and running the module there may crash.
-assert(2 ^ 53 + 1 == 2 ^ 53 and 2 ^ 24 + 1 ~= 2 ^ 24 and (math.maxinteger or 2 ^ 63) > 2 ^ 62,
-  "ws needs a Lua with 64-bit integers and double numbers")
 
 local function platform()
   if windows then
@@ -27,7 +21,7 @@ local function platform()
   if pipe then pipe:close() end
   arch = ({ aarch64 = "arm64", amd64 = "x86_64" })[arch] or arch
   local name = ({ Linux = "linux", Darwin = "macosx" })[os_name]
-  return name and (name .. "-" .. arch) or nil
+  if name and (arch == "x86_64" or arch == "arm64") then return name .. "-" .. arch end
 end
 
 local function copy(from, to)
@@ -41,40 +35,34 @@ local function copy(from, to)
   return true
 end
 
--- Opens the module as require would: true; nil and why it does not load;
--- or false and why it refused this Lua, which a rebuild cannot change.
+-- Opens the module as require would, including its runtime checks. On
+-- failure, also returns whether the system loader refused the file.
 local function open()
   local loader, err = package.loadlib("./" .. output, "luaopen_ws_core")
-  if not loader then return nil, err end
+  if not loader then return false, err, true end
   local ok, core = pcall(loader, "ws.core")
   if ok and type(core) == "table" then return true end
-  return false, ok and "ws.core cannot load into this Lua runtime" or tostring(core)
+  return false, ok and "it is not compatible with this Lua runtime" or tostring(core)
 end
+
+-- What the system needs when it refuses a prebuilt module.
+local NEEDS = { linux = "glibc 2.28 or newer", macosx = "macOS 11 or newer" }
 
 local target = platform()
-if target and copy("bundles/" .. target .. "/" .. (windows and "core.dll" or "core.so"), output) then
-  local ok, err = open()
-  if ok then
-    print("ws: using the prebuilt module for " .. target)
-    return
-  end
-  assert(ok == nil, "ws: " .. tostring(err))
-  print("ws: the prebuilt module does not load here (" .. tostring(err) .. "); building from source")
-  os.remove(output)
-else
-  print("ws: no prebuilt module for " .. tostring(target) .. "; building from source")
+if not target then
+  error("ws: no prebuilt module for this platform. Supported platforms: "
+    .. "linux-x86_64, linux-arm64, macosx-x86_64, macosx-arm64, win32-x86_64.", 0)
 end
-
-local cargo = io.popen("cargo --version 2>&1")
-local found = cargo and (cargo:read("*a") or ""):find("^cargo") ~= nil
-if cargo then cargo:close() end
-assert(found, "ws: building from source needs Rust; install it from https://rustup.rs and retry")
-
-local lua = arg[-1] or "lua"
-local q = windows and '"' or "'"
-local cmd = q .. lua .. q .. " scripts/build.lua"
--- cmd.exe strips one pair of outer quotes from a command starting with one.
-local ok = os.execute(windows and ('"' .. cmd .. '"') or cmd)
-assert(ok == true or ok == 0, "ws: building the native module failed")
-local opened, err = open()
-assert(opened, "ws: the module built from source does not load: " .. tostring(err))
+if not copy("bundles/" .. target .. "/" .. (windows and "core.dll" or "core.so"), output) then
+  error("ws: the prebuilt module for " .. target .. " is missing from this package. "
+    .. "Install the release from LuaRocks instead: luarocks install ws", 0)
+end
+local ok, err, system = open()
+if not ok then
+  os.remove(output)
+  -- Windows system messages end in a period and a line break.
+  local reason = tostring(err):gsub("[%s%.]+$", "")
+  local needs = system and NEEDS[target:match("^[^-]+")]
+  error("ws: the prebuilt module for " .. target .. " failed to load: " .. reason
+    .. (needs and (". It needs " .. needs .. ".") or ""), 0)
+end

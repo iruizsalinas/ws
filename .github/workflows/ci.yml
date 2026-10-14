@@ -165,6 +165,7 @@ jobs:
           & "$build\lua\5.4\bin\lua.exe" scripts/build.lua
           foreach ($v in $versions) {
             Write-Output "== Lua $v"
+            & "$build\lua\$v\bin\lua.exe" tests/native/install.lua
             & "$build\lua\$v\bin\lua.exe" tests/run.lua
             python tests/native/strings.py --lua "$build\lua\$v\bin\lua.exe"
           }

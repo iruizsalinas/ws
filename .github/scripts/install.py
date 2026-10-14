@@ -42,7 +42,7 @@ def isolated_path(lua, luarocks, work):
 def main(lua, luarocks):
     lua, luarocks = Path(lua).resolve(), Path(luarocks).resolve()
     # The rock of the current release rockspec, not one left by an older run.
-    spec = next(p for p in ROOT.glob("ws-*-1.rockspec") if "scm" not in p.name)
+    spec = next(ROOT.glob("ws-[0-9]*-1.rockspec"))
     rock = ROOT / "dist/local" / spec.name.replace(".rockspec", ".src.rock")
     version = rock.name[len("ws-"):-len(".src.rock")]
     abi = subprocess.check_output([str(lua), "-e", 'io.write(_VERSION:match("%d+%.%d+"))'], text=True)

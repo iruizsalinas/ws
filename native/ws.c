@@ -71,7 +71,7 @@ static int wide_integers(lua_State *L) {
 int ws_open(lua_State *L) {
 #ifndef _WIN32
     if (!ws_bind_api(NULL)) {
-        lua_pushstring(L, "ws.core cannot bind or pin this Lua runtime");
+        lua_pushstring(L, "ws.core is not compatible with this Lua runtime");
         return lua_error(L);
     }
 #endif
@@ -86,7 +86,7 @@ int ws_open(lua_State *L) {
     int doubles = lua_toboolean(L, -1);
     lua_settop(L, -2);
     if (!doubles) {
-        lua_pushstring(L, "ws.core needs a Lua with double numbers");
+        lua_pushstring(L, "ws.core needs a Lua with double-precision numbers");
         return lua_error(L);
     }
     int n = (int)(sizeof FUNCS / sizeof FUNCS[0]);

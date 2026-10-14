@@ -3,10 +3,10 @@
 -- ws.core assumes double numbers and 64-bit integers, Lua's defaults. Checked
 -- here first: native code can crash on other number types.
 assert(2 ^ 53 + 1 == 2 ^ 53 and 2 ^ 24 + 1 ~= 2 ^ 24 and (math.maxinteger or 2 ^ 63) > 2 ^ 62,
-  "ws needs a Lua with 64-bit integers and double numbers")
+  "ws needs a Lua with 64-bit integers and double-precision numbers")
 local core = require("ws.core")
 -- On Windows, a ws.core that cannot use this Lua runtime returns nothing.
-assert(type(core) == "table", "ws.core cannot load into this Lua runtime")
+assert(type(core) == "table", "ws.core is not compatible with this Lua runtime")
 local timer = require("ws.timer")
 
 local loop = {
