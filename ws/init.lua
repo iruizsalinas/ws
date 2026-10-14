@@ -5,7 +5,7 @@ local socket = require("ws.socket")
 local timer = require("ws.timer")
 
 return {
-  _VERSION = "0.2.0",
+  _VERSION = "0.2.1",
   connect = socket.connect,
   listen = server.listen,
   run = loop.run,
