@@ -1,4 +1,4 @@
-"""Run string ownership fault tests against any supported Lua runtime."""
+"""Run string ownership fault tests, for results and arguments, against any supported Lua runtime."""
 import argparse
 import json
 import os
@@ -15,18 +15,20 @@ def test(lua, cc):
     out = ROOT / ".build" / "native-tests"
     out.mkdir(parents=True, exist_ok=True)
     windows = os.name == "nt"
-    module = out / ("strings.dll" if windows else "strings.so")
     flags = ["-std=c11", "-O2", "-Wall", "-Wextra", "-Werror", "-shared"]
     if windows:
         flags += ["-static"]
     else:
         flags += ["-fPIC", "-pthread"]
         flags += ["-undefined", "dynamic_lookup"] if sys.platform == "darwin" else ["-ldl"]
-    subprocess.run([cc, *flags, "tests/native/strings.c", "native/luaapi.c", "-o", str(module)],
-                   cwd=ROOT, check=True)
-    path = json.dumps(module.as_posix(), ensure_ascii=False)
-    code = f'assert(assert(package.loadlib({path}, "luaopen_ws_strings"))())'
-    subprocess.run([lua, "-e", code], cwd=ROOT, check=True)
+    # strings: owned results; input: borrowed arguments.
+    for name in ["strings", "input"]:
+        module = out / (f"{name}.dll" if windows else f"{name}.so")
+        subprocess.run([cc, *flags, f"tests/native/{name}.c", "native/luaapi.c", "-o", str(module)],
+                       cwd=ROOT, check=True)
+        path = json.dumps(module.as_posix(), ensure_ascii=False)
+        code = f'assert(assert(package.loadlib({path}, "luaopen_ws_{name}"))())'
+        subprocess.run([lua, "-e", code], cwd=ROOT, check=True)
     print("String ownership fault tests passed", flush=True)
 
 

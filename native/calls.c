@@ -1,6 +1,15 @@
-/* Calls that may return owned strings. Validate and prepare the Lua
- * converter before entering Rust, then copy under a protected call. */
+/* Calls that may return owned strings. Prepare the Lua converter first:
+ * it can allocate and so run finalizers, which may replace arguments and
+ * collect their strings. Then read arguments, enter Rust, and copy the
+ * result under a protected call. */
 #include "glue.h"
+
+/* Fix the arity first, so the converter lands after every argument and an
+ * omitted one stays nil instead of reading the converter. */
+static void prepare_args(lua_State *L, int args, ws_str *s) {
+    lua_settop(L, args);
+    prepare_str(L, s);
+}
 
 int l_wait(lua_State *L) {
     uint64_t hub = check_id(L, 1);
@@ -22,26 +31,26 @@ int l_wait(lua_State *L) {
 }
 
 int l_connect(lua_State *L) {
+    ws_str s;
+    prepare_args(L, 9, &s);
     uint64_t hub = check_id(L, 1), id = 0;
     ws_str url = opt_str(L, 2), protocols = opt_str(L, 3), headers = opt_str(L, 4), ca = opt_str(L, 5);
     double timeout = luaL_optnumber(L, 6, 0);
     uint64_t max = opt_size(L, 7), buffer = opt_size(L, 8);
     double heartbeat = opt_heartbeat(L, 9);
-    ws_str s;
-    prepare_str(L, &s);
     int rc = ws_connect(hub, url, protocols, headers, ca, timeout, max, buffer, heartbeat, &id);
     return handle(L, rc, id, &s);
 }
 
 int l_listen(lua_State *L) {
+    ws_str s;
+    prepare_args(L, 9, &s);
     uint64_t hub = check_id(L, 1), id = 0;
     ws_str host = opt_str(L, 2), cert = opt_str(L, 4), key = opt_str(L, 5);
     lua_Integer port = luaL_checkinteger(L, 3);
     luaL_argcheck(L, port >= 0 && port <= 65535, 3, "invalid port");
     uint64_t max = opt_size(L, 6), buffer = opt_size(L, 7), connections = opt_size(L, 8);
     double heartbeat = opt_heartbeat(L, 9);
-    ws_str s;
-    prepare_str(L, &s);
     int rc = ws_listen(hub, host, (uint16_t)port, cert, key, max, buffer, connections, heartbeat, &id);
     return handle(L, rc, id, &s);
 }
@@ -57,35 +66,39 @@ int l_unlisten(lua_State *L) {
 }
 
 int l_reply(lua_State *L) {
+    ws_str s;
+    prepare_args(L, 3, &s);
     uint64_t token = check_id(L, 1);
     lua_Integer status = luaL_optinteger(L, 2, 0);
     luaL_argcheck(L, status >= 0 && status <= 65535, 2, "invalid status");
-    ws_str protocol = opt_str(L, 3), s;
-    prepare_str(L, &s);
+    ws_str protocol = opt_str(L, 3);
     return result(L, ws_reply(token, (uint16_t)status, protocol), &s);
 }
 
 int l_send(lua_State *L) {
+    ws_str s;
+    prepare_args(L, 3, &s);
     uint64_t id = check_id(L, 1);
-    ws_str data = opt_str(L, 2), s;
+    ws_str data = opt_str(L, 2);
     int binary = lua_toboolean(L, 3);
-    prepare_str(L, &s);
     return result(L, ws_send(id, data, binary), &s);
 }
 
 int l_ping(lua_State *L) {
+    ws_str s;
+    prepare_args(L, 2, &s);
     uint64_t id = check_id(L, 1);
-    ws_str data = opt_str(L, 2), s;
-    prepare_str(L, &s);
+    ws_str data = opt_str(L, 2);
     return result(L, ws_ping(id, data), &s);
 }
 
 int l_close(lua_State *L) {
+    ws_str s;
+    prepare_args(L, 3, &s);
     uint64_t id = check_id(L, 1);
     lua_Integer code = luaL_optinteger(L, 2, 1000);
     if (code < 0 || code > 65535) code = 0; /* rejected by ws_close */
-    ws_str reason = opt_str(L, 3), s;
-    prepare_str(L, &s);
+    ws_str reason = opt_str(L, 3);
     return result(L, ws_close(id, (int)code, reason), &s);
 }
 
