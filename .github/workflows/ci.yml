@@ -18,9 +18,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, macos-15, windows-2022]
+        os: [ubuntu-24.04, macos-15, windows-2022]
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - name: Lint
         if: runner.os == 'Linux'
         run: |
@@ -31,9 +31,9 @@ jobs:
 
   msrv:
     name: Rust 1.88 (minimum)
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - name: Test
         run: |
           rustup toolchain install 1.88 --profile minimal
@@ -41,9 +41,9 @@ jobs:
 
   audit:
     name: Dependency audit
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - name: Audit
         run: |
           cargo install cargo-audit --locked --version 0.22.2
@@ -51,19 +51,19 @@ jobs:
 
   fuzz:
     name: Fuzz / ${{ matrix.target }}
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
         target: [reader, handshake]
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - name: Fuzz
         run: |
           rustup toolchain install nightly --profile minimal
           cargo install cargo-fuzz --locked --version 0.13.2
           cargo +nightly fuzz run '${{ matrix.target }}' -- -max_total_time=60
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         if: failure()
         with:
           name: fuzz-${{ matrix.target }}
@@ -71,10 +71,10 @@ jobs:
 
   autobahn:
     name: Autobahn TestSuite
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: '3.13'
       - name: Run
@@ -82,7 +82,7 @@ jobs:
           python .github/scripts/lua.py 5.4
           .build/lua/5.4/bin/lua scripts/build.lua
           python .github/scripts/autobahn.py --lua .build/lua/5.4/bin/lua
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         if: failure()
         with:
           name: autobahn
@@ -92,7 +92,7 @@ jobs:
   # once and tests it with all of them.
   linux:
     name: linux-${{ matrix.arch }}
-    runs-on: ${{ matrix.arch == 'aarch64' && 'ubuntu-22.04-arm' || 'ubuntu-22.04' }}
+    runs-on: ${{ matrix.arch == 'aarch64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     # Built against glibc 2.28, so the bundles load on RHEL 8, Debian 10,
     # Ubuntu 18.10 and anything newer.
     container: ${{ matrix.arch == 'aarch64'
@@ -103,7 +103,7 @@ jobs:
       matrix:
         arch: [x86_64, aarch64]
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - name: Toolchain
         run: |
           curl -sSf --retry 5 --retry-connrefused https://sh.rustup.rs | sh -s -- -y --profile minimal
@@ -111,7 +111,7 @@ jobs:
           echo /opt/python/cp313-cp313/bin >> "$GITHUB_PATH"
       - name: Build and test
         run: sh .github/scripts/bundle.sh
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: bundle-linux-${{ matrix.arch }}
           path: bundles/
@@ -127,8 +127,8 @@ jobs:
     env:
       MACOSX_DEPLOYMENT_TARGET: '11.0'
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: '3.13'
       - name: Windows toolchain
@@ -136,9 +136,9 @@ jobs:
         if: runner.os == 'Windows'
         uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e # v2
         with:
-          msystem: MINGW64
+          msystem: UCRT64
           update: true
-          install: mingw-w64-x86_64-gcc
+          install: mingw-w64-ucrt-x86_64-gcc
       - name: Build and test (macOS)
         if: runner.os == 'macOS'
         run: |
@@ -155,8 +155,8 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $true
-          # MinGW gcc only: MSYS2's usr\bin has a link.exe that shadows MSVC's.
-          $env:PATH = "$env:MSYS2_LOCATION\mingw64\bin;" + $env:PATH
+          # UCRT64 gcc only: MSYS2's usr\bin has a link.exe that shadows MSVC's.
+          $env:PATH = "$env:MSYS2_LOCATION\ucrt64\bin;" + $env:PATH
           rustup toolchain install stable-x86_64-pc-windows-gnu --profile minimal
           $env:RUSTUP_TOOLCHAIN = 'stable-x86_64-pc-windows-gnu'
           $versions = '5.1', '5.2', '5.3', '5.4', '5.5'
@@ -177,7 +177,7 @@ jobs:
             Write-Output "== Installed into Lua $v"
             python .github/scripts/install.py --lua "$build\lua\$v\bin\lua.exe" --luarocks .build/luarocks/luarocks-3.13.0-windows-64/luarocks.exe
           }
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: bundle-${{ matrix.os }}
           path: bundles/
@@ -191,12 +191,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-22.04
+          - os: ubuntu-24.04
             bundle: bundle-linux-x86_64
           - os: macos-15
             bundle: bundle-macos-15
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - name: Install LuaJIT
         run: |
           if [ "$RUNNER_OS" = Linux ]; then sudo apt-get install -y luajit; else brew install luajit; fi
@@ -205,7 +205,7 @@ jobs:
           luajit scripts/build.lua
           luajit tests/run.lua
           python tests/native/strings.py --lua luajit
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           name: ${{ matrix.bundle }}
           path: bundles
@@ -216,20 +216,20 @@ jobs:
 
   assemble:
     needs: [rust, msrv, audit, fuzz, autobahn, linux, bundle, luajit]
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: '3.13'
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           pattern: bundle-*
           path: bundles
           merge-multiple: true
       - name: Package every bundle
         run: python .github/scripts/package.py
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: release
           path: |
