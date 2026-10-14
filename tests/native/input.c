@@ -1,7 +1,7 @@
-/* Run Lua code where the production glue prepares its converter, modelling
- * a GC finalizer there. Lua's debug API can replace a C function's
- * arguments and collect their strings, so the glue must prepare before it
- * reads any borrowed argument. */
+/* Run Lua code wherever the production glue could allocate, modelling a GC
+ * finalizer there. Lua's debug API can replace a C function's arguments and
+ * collect their strings, so nothing may allocate while one is borrowed:
+ * prepare the converter first, and never convert a number to a string. */
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -13,11 +13,15 @@
 #include <string.h>
 
 static void interrupted_prepare(lua_State *L, lua_CFunction fn, int upvalues);
+static const char *interrupted_convert(lua_State *L, int i, size_t *len);
 #define lua_pushcclosure interrupted_prepare
+#define luaL_checklstring interrupted_convert
 #include "../../native/values.c"
+#undef luaL_checklstring
 #undef lua_pushcclosure
 #include "../../native/calls.c"
 
+enum { CALM, PREPARE, CONVERT };
 static int armed, disturbed;
 static ws_str seen;
 static _Thread_local void *context;
@@ -68,20 +72,30 @@ void ws_terminate(uint64_t id) { (void)id; abort(); }
 ws_str ws_protocol(uint64_t id) { (void)id; abort(); }
 
 /* Clear argument `slot` of the running `target` and collect its string. */
+static void disturb(lua_State *L, int at) {
+    if (armed != at) return;
+    armed = CALM;
+    const char *script =
+        "for level = 1, 20 do"
+        "  local info = assert(debug.getinfo(level, 'f'), 'target frame not found')"
+        "  if info.func == target then debug.setlocal(level, slot, nil) break end "
+        "end "
+        "collectgarbage('collect')";
+    assert(luaL_loadstring(L, script) == 0);
+    assert(ws_pcall(L, 0, 0) == 0);
+    disturbed = 1;
+}
+
+/* Creating the converter allocates. */
 static void interrupted_prepare(lua_State *L, lua_CFunction fn, int upvalues) {
-    if (armed) {
-        armed = 0;
-        const char *script =
-            "for level = 1, 20 do"
-            "  local info = assert(debug.getinfo(level, 'f'), 'target frame not found')"
-            "  if info.func == target then debug.setlocal(level, slot, nil) break end "
-            "end "
-            "collectgarbage('collect')";
-        assert(luaL_loadstring(L, script) == 0);
-        assert(ws_pcall(L, 0, 0) == 0);
-        disturbed = 1;
-    }
+    disturb(L, PREPARE);
     lua_pushcclosure(L, fn, upvalues);
+}
+
+/* So does converting a number argument to a string. */
+static const char *interrupted_convert(lua_State *L, int i, size_t *len) {
+    if (lua_type(L, i) == LUA_TNUMBER) disturb(L, CONVERT);
+    return luaL_checklstring(L, i, len);
 }
 
 static void run(lua_State *L, const char *chunk) {
@@ -97,11 +111,25 @@ static void check(lua_State *L, const char *call) {
     run(L, call); /* undisturbed: the stub sees the argument */
     assert(seen.ptr && seen.len == 64);
     for (size_t i = 0; i < seen.len; i++) assert(seen.ptr[i] == 'x');
-    armed = 1, disturbed = 0;
+    armed = PREPARE, disturbed = 0;
     run(L, call);
     assert(disturbed);
     /* Read after preparation, the cleared argument is absent, not freed. */
     assert(!seen.ptr);
+}
+
+/* `call` borrows a string as argument `slot`, then passes a number where a
+ * later string goes. Converting it could free the borrowed one: refuse it. */
+static void refuse(lua_State *L, const char *call) {
+    record((ws_str){"untouched", 9});
+    armed = CONVERT, disturbed = 0;
+    assert(luaL_loadstring(L, call) == 0);
+    assert(ws_pcall(L, 0, 0) != 0);
+    size_t len;
+    assert(strstr(luaL_checklstring(L, -1, &len), "string expected"));
+    lua_settop(L, -2);
+    armed = CALM;
+    assert(!disturbed && seen.len == 9 && !memcmp(seen.ptr, "untouched", 9)); /* Rust never ran */
 }
 
 #ifdef _WIN32
@@ -127,6 +155,9 @@ int luaopen_ws_input(lua_State *L) {
     check(L, "target, slot = ping, 2; ping(1, string.rep('x', 64))");
     check(L, "target, slot = close, 3; close(1, 1000, string.rep('x', 64))");
     check(L, "target, slot = reply, 3; reply(1, 0, string.rep('x', 64))");
+    refuse(L, "target, slot = connect, 2; connect(1, string.rep('x', 64), 5)");
+    refuse(L, "target, slot = listen, 2; listen(1, string.rep('x', 64), 0, 5)");
+    refuse(L, "target, slot = send, 2; send(1, 42)");
     record((ws_str){NULL, 0});
     lua_pushboolean(L, 1);
     return 1;

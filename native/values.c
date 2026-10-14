@@ -1,9 +1,14 @@
 /* Validation and error-safe copying of Rust-owned strings into Lua. */
 #include "glue.h"
 
+/* Borrows a string argument without allocating. Converting a number would
+ * allocate and so could run finalizers that replace an argument borrowed
+ * earlier in the same call. The Lua layer passes only strings anyway. */
 ws_str opt_str(lua_State *L, int i) {
     ws_str s = {NULL, 0};
-    if (!lua_isnoneornil(L, i)) s.ptr = luaL_checklstring(L, i, &s.len);
+    if (lua_isnoneornil(L, i)) return s;
+    luaL_argcheck(L, lua_type(L, i) == LUA_TSTRING, i, "string expected");
+    s.ptr = luaL_checklstring(L, i, &s.len);
     return s;
 }
 
@@ -49,7 +54,8 @@ static int copy_str(lua_State *L) {
     }
     current->entered = 1;
     const ws_str *s = current->string;
-    if (s->ptr) lua_pushlstring(L, s->ptr, s->len);
+    /* Rust's empty strings carry a dangling, non-null pointer. */
+    if (s->ptr) lua_pushlstring(L, s->len ? s->ptr : "", s->len);
     else lua_pushnil(L);
     return 1;
 }

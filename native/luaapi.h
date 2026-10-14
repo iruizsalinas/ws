@@ -57,6 +57,8 @@ int ws_pcall(lua_State *L, int nargs, int nresults);
 
 #define LUA_TNIL 0
 #define LUA_TBOOLEAN 1
+#define LUA_TNUMBER 3
+#define LUA_TSTRING 4
 #define LUA_TTABLE 5
 
 #define lua_isnoneornil(L, i) (lua_type(L, i) <= LUA_TNIL)
