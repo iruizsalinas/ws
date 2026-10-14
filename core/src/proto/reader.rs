@@ -1,6 +1,13 @@
 //! An incremental reader that validates frames and assembles messages.
 
 use super::frame::{BINARY, CLOSE, CONTINUATION, Fail, Msg, PING, PONG, TEXT, apply_mask, valid_close_code};
+use std::ops::Range;
+
+struct Frame {
+    fin: bool,
+    op: u8,
+    payload: Range<usize>,
+}
 
 struct Partial {
     op: u8,
@@ -24,26 +31,31 @@ impl Reader {
     }
 
     pub fn push(&mut self, data: &[u8]) {
+        self.input().extend_from_slice(data);
+    }
+
+    /// Compact before borrowing the destination for a bounded transport read.
+    pub(crate) fn input(&mut self) -> &mut Vec<u8> {
         if self.pos > 0 {
             self.buf.drain(..self.pos);
             self.pos = 0;
         }
-        self.buf.extend_from_slice(data);
+        &mut self.buf
     }
 
     /// The next complete message, `None` if more input is needed.
     pub fn message(&mut self) -> Result<Option<Msg>, Fail> {
         loop {
-            let Some((fin, op, payload)) = self.frame()? else {
+            let Some(frame) = self.frame()? else {
                 return Ok(None);
             };
-            if let Some(msg) = self.assemble(fin, op, payload)? {
+            if let Some(msg) = self.assemble(frame)? {
                 return Ok(Some(msg));
             }
         }
     }
 
-    fn frame(&mut self) -> Result<Option<(bool, u8, Vec<u8>)>, Fail> {
+    fn frame(&mut self) -> Result<Option<Frame>, Fail> {
         let b = &self.buf[self.pos..];
         if b.len() < 2 {
             return Ok(None);
@@ -98,28 +110,30 @@ impl Reader {
         if len > b.len() - at {
             return Ok(None);
         }
-        let mut payload = b[at..at + len].to_vec();
+        let start = self.pos + at;
+        let end = start + len;
         if let Some(key) = mask {
-            apply_mask(&mut payload, key);
+            apply_mask(&mut self.buf[start..end], key);
         }
-        self.pos += at + len;
-        Ok(Some((fin, op, payload)))
+        self.pos = end;
+        Ok(Some(Frame { fin, op, payload: start..end }))
     }
 
-    fn assemble(&mut self, fin: bool, op: u8, payload: Vec<u8>) -> Result<Option<Msg>, Fail> {
+    fn assemble(&mut self, Frame { fin, op, payload }: Frame) -> Result<Option<Msg>, Fail> {
+        let payload = &self.buf[payload];
         match op {
-            PING => return Ok(Some(Msg::Ping(payload))),
-            PONG => return Ok(Some(Msg::Pong(payload))),
-            CLOSE => return close(&payload).map(Some),
+            PING => return Ok(Some(Msg::Ping(payload.to_vec()))),
+            PONG => return Ok(Some(Msg::Pong(payload.to_vec()))),
+            CLOSE => return close(payload).map(Some),
             _ => {}
         }
         // `frame` validated sequencing before accepting the payload.
         let partial = match self.partial.as_mut() {
             Some(p) => {
-                p.data.extend_from_slice(&payload);
+                p.data.extend_from_slice(payload);
                 p
             }
-            None => self.partial.insert(Partial { op, data: payload, checked: 0 }),
+            None => self.partial.insert(Partial { op, data: payload.to_vec(), checked: 0 }),
         };
         if partial.op == TEXT {
             match std::str::from_utf8(&partial.data[partial.checked..]) {

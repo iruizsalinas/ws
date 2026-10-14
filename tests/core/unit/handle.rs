@@ -84,6 +84,65 @@ fn small_writes_share_queue_entries() {
 }
 
 #[test]
+fn direct_frame_appends_preserve_masks_accounting_and_queue_barriers() {
+    use crate::net::link::{Io, heartbeat::Sent};
+    use crate::proto::reader::Reader;
+    use std::net::{TcpListener, TcpStream};
+    for server in [true, false] {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let _peer = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (tcp, _) = listener.accept().unwrap();
+        let (tx, _rx) = channel();
+        let link = Link::new(1, server, Config::test(1024), tx.into());
+        assert!(link.io.set(Io::new(tcp)).is_ok());
+        lock(&link.flags).state = State::Open;
+        link.send(frame::BINARY, b"abc").unwrap();
+        link.send(frame::PING, b"").unwrap();
+        link.send(frame::TEXT, "\u{e9}".as_bytes()).unwrap();
+        let sent = Sent::default();
+        link.push_heartbeat(sent.clone());
+        link.send(frame::BINARY, &[9; 126]).unwrap();
+        link.push_shutdown();
+        link.push_frame(frame::PONG, b"after");
+        let q = lock(&link.queue);
+        assert_eq!(q.items.len(), 5);
+        let mut reader = Reader::new(!server, 1024);
+        let mut bytes = 0;
+        for item in &q.items {
+            match item {
+                Item::Data(data) => {
+                    bytes += data.len();
+                    reader.push(data);
+                }
+                Item::Heartbeat(data, completion) => {
+                    assert!(std::sync::Arc::ptr_eq(completion, &sent));
+                    bytes += data.len();
+                    reader.push(data);
+                }
+                Item::Shutdown => {}
+            }
+        }
+        assert_eq!(link.buffered.load(Relaxed), bytes);
+        for expected in [
+            Msg::Binary(b"abc".to_vec()),
+            Msg::Ping(vec![]),
+            Msg::Text("\u{e9}".as_bytes().to_vec()),
+            Msg::Ping(link.token.to_vec()),
+            Msg::Binary(vec![9; 126]),
+            Msg::Pong(b"after".to_vec()),
+        ] {
+            assert_eq!(reader.message().unwrap(), Some(expected));
+        }
+        assert_eq!(reader.message().unwrap(), None);
+        drop(q);
+        link.stop_writer();
+        link.push_frame(frame::BINARY, b"discarded");
+        assert!(lock(&link.queue).items.is_empty());
+        assert_eq!(link.buffered.load(Relaxed), bytes, "stopped queue must not count discarded frames");
+    }
+}
+
+#[test]
 fn drain_is_reported_once_a_refused_send_would_fit() {
     let (tx, rx) = channel();
     let link = Link::new(1, true, Config { buffer: 64, ..Config::test(1024) }, tx.into());

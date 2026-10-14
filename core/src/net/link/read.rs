@@ -5,9 +5,18 @@ use super::{Io, Link, State};
 use crate::net::{stream::Stream, timer::Timer};
 use crate::proto::reader::Reader;
 use crate::{Event, lock};
+use bytes::BufMut;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::io::{AsyncRead, AsyncReadExt};
+
+const READ_CHUNK: usize = 16 * 1024;
+
+async fn read_chunk(stream: &mut (impl AsyncRead + Unpin), input: &mut Vec<u8>) -> std::io::Result<usize> {
+    input.reserve(READ_CHUNK);
+    // Retained capacity must not increase one read's work.
+    stream.read_buf(&mut input.limit(READ_CHUNK)).await
+}
 
 impl Link {
     pub async fn start(self: &Arc<Self>, stream: Stream, rest: Vec<u8>, protocol: Option<String>, open: Event) {
@@ -39,7 +48,8 @@ impl Link {
         let mut reader = Reader::new(self.server, self.max);
         reader.push(&rest);
         let mut ok = true;
-        let mut buf = vec![0; 16 * 1024];
+        // Allocate discard storage only after frames may no longer be parsed.
+        let mut discard = Vec::new();
         let mut alive = Alive::new();
         let stopped = self.stopped.wait();
         let closed = self.events.wait_closed();
@@ -72,12 +82,18 @@ impl Link {
                 continue;
             }
             timer.set(deadline.or_else(|| self.heartbeat_deadline(&alive)));
+            let input = if ok {
+                reader.input()
+            } else {
+                discard.clear();
+                &mut discard
+            };
             let result = tokio::select! {
                 biased;
                 _ = &mut stopped => break,
                 _ = &mut closed => { self.terminate(); break; }
                 _ = self.changed.notified() => continue,
-                result = stream.read(&mut buf) => result,
+                result = read_chunk(&mut stream, input) => result,
                 _ = timer.wait() => {
                     if !self.heartbeat(&mut alive) { break; }
                     continue;
@@ -87,9 +103,6 @@ impl Link {
                 Ok(0) => break,
                 Ok(n) => {
                     alive.seen = Instant::now();
-                    if ok {
-                        reader.push(&buf[..n]);
-                    }
                     budget.progress(n).await;
                 }
                 Err(e) => {

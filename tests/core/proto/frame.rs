@@ -66,6 +66,39 @@ fn utf8_split_across_fragments() {
 }
 
 #[test]
+fn continuation_assembly_unmasks_each_frame_once_and_keeps_controls_separate() {
+    use ws_core::proto::frame::PONG;
+    let text = "a\u{1f600}bc\u{e9}".repeat(100).into_bytes();
+    let mut wire = Vec::new();
+    let mut expected = Vec::new();
+    for (i, part) in text.chunks(3).enumerate() {
+        let op = if i == 0 { TEXT } else { CONTINUATION };
+        let mut encoded = encode(op, part, Some([i as u8, 91, 37, 255]));
+        if (i + 1) * 3 < text.len() {
+            encoded[0] &= 0x7f;
+        }
+        wire.extend(encoded);
+        if i % 11 == 0 {
+            let ping = vec![i as u8];
+            wire.extend(encode(PING, &ping, Some(KEY)));
+            wire.extend(encode(PONG, &[], Some(KEY)));
+            expected.extend([Msg::Ping(ping), Msg::Pong(vec![])]);
+        }
+    }
+    expected.push(Msg::Text(text));
+    let mut reader = Reader::new(true, 4096);
+    let mut received = Vec::new();
+    for chunk in wire.chunks(5) {
+        reader.push(chunk);
+        while let Some(msg) = reader.message().unwrap() {
+            received.push(msg);
+        }
+        assert_eq!(reader.message().unwrap(), None, "polling incomplete input must not unmask again");
+    }
+    assert_eq!(received, expected);
+}
+
+#[test]
 fn violations() {
     let mut rsv = frame(true, TEXT, b"x");
     rsv[0] |= 0x40;

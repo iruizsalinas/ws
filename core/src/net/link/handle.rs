@@ -45,7 +45,7 @@ impl Link {
         f.deadline.get_or_insert(Instant::now() + CLOSE_TIMEOUT);
         if !f.sent_close {
             f.sent_close = true;
-            self.push(self.frame(frame::CLOSE, &frame::close_payload(code, "")));
+            self.push_frame(frame::CLOSE, &frame::close_payload(code, ""));
         }
         self.push_shutdown();
     }
@@ -63,7 +63,7 @@ impl Link {
                         // Preserve reply ordering before delivering later messages.
                         // A newer immediate reply also supersedes a deferred one.
                         lock(&self.queue).pong = None;
-                        self.push(self.frame(frame::PONG, &data));
+                        self.push_frame(frame::PONG, &data);
                     } else {
                         // Coalesce pending replies instead of dropping the pong or
                         // allocating an unbounded control queue for a slow reader.
@@ -92,7 +92,7 @@ impl Link {
         if !f.sent_close {
             f.sent_close = true;
             let echo = status.map(|(code, _)| frame::close_payload(code, "")).unwrap_or_default();
-            self.push(self.frame(frame::CLOSE, &echo));
+            self.push_frame(frame::CLOSE, &echo);
         }
         // The server closes the TCP connection first (RFC 6455 section 7.1.1).
         if self.server {

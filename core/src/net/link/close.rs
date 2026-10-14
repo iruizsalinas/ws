@@ -19,7 +19,7 @@ impl Link {
                 f.sent_close = true;
                 f.state = State::Closing;
                 f.deadline = Some(Instant::now() + CLOSE_TIMEOUT);
-                self.push(self.frame(frame::CLOSE, &frame::close_payload(code, reason)));
+                self.push_frame(frame::CLOSE, &frame::close_payload(code, reason));
             }
             _ => {}
         }

@@ -5,6 +5,39 @@ use crate::net::runtime;
 use std::sync::atomic::Ordering::Relaxed;
 use std::sync::mpsc::channel;
 use std::time::Duration;
+use tokio::io::AsyncWriteExt;
+
+#[test]
+fn direct_reads_stay_bounded_and_preserve_pending_input() {
+    runtime::shared().unwrap().block_on(async {
+        let data = vec![7; READ_CHUNK * 3];
+        let mut stream = data.as_slice();
+        let mut input = Vec::with_capacity(1 << 20);
+        input.extend_from_slice(b"pending");
+        assert_eq!(read_chunk(&mut stream, &mut input).await.unwrap(), READ_CHUNK);
+        assert_eq!(&input[..7], b"pending");
+        assert_eq!(&input[7..], &data[..READ_CHUNK]);
+        assert_eq!(stream.len(), READ_CHUNK * 2);
+    });
+}
+
+#[test]
+fn cancelled_direct_read_preserves_input_and_can_resume() {
+    runtime::shared().unwrap().block_on(async {
+        let (mut stream, mut peer) = tokio::io::duplex(16);
+        let mut reader = Reader::new(false, 1024);
+        reader.push(&[0x82, 3, 1]); // an incomplete binary frame
+        tokio::select! {
+            biased;
+            result = read_chunk(&mut stream, reader.input()) => panic!("unexpected read: {result:?}"),
+            _ = std::future::ready(()) => {}
+        }
+        assert_eq!(reader.message().unwrap(), None);
+        peer.write_all(&[2, 3]).await.unwrap();
+        assert_eq!(read_chunk(&mut stream, reader.input()).await.unwrap(), 2);
+        assert_eq!(reader.message().unwrap(), Some(crate::proto::frame::Msg::Binary(vec![1, 2, 3])));
+    });
+}
 
 #[test]
 fn closing_connections_do_not_wait_for_application_consumption() {

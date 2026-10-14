@@ -38,7 +38,7 @@ impl Link {
                 return Err("send buffer is full");
             }
         }
-        self.push(self.frame(op, payload));
+        self.push_frame(op, payload);
         Ok(())
     }
 
@@ -57,6 +57,30 @@ impl Link {
         }
     }
 
+    /// Encode small frames directly into the queue; keep large copies outside
+    /// its lock. Callers retain flags to serialize sends with closing.
+    pub(super) fn push_frame(&self, op: u8, payload: &[u8]) {
+        let len = frame::encoded_len(payload.len(), !self.server);
+        if len >= JOIN {
+            return self.push(self.frame(op, payload));
+        }
+        if self.io.get().is_none() {
+            return;
+        }
+        let mask = (!self.server).then(crate::random::<4>);
+        let mut q = lock(&self.queue);
+        if q.done {
+            return;
+        }
+        match q.items.back_mut() {
+            Some(Item::Data(last)) if last.len() < JOIN => frame::encode_into(last, op, payload, mask),
+            _ => q.items.push_back(Item::Data(frame::encode(op, payload, mask))),
+        }
+        self.buffered.fetch_add(len, Relaxed);
+        drop(q);
+        self.ready.notify_one();
+    }
+
     pub(super) fn push_heartbeat(&self, sent: Sent) {
         if self.io.get().is_some() {
             self.enqueue(Item::Heartbeat(self.frame(frame::PING, &self.token), sent));
@@ -71,7 +95,7 @@ impl Link {
             && f.failed.is_none()
             && let Some(data) = pong
         {
-            self.push(self.frame(frame::PONG, &data));
+            self.push_frame(frame::PONG, &data);
         }
     }
 

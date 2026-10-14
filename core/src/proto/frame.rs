@@ -18,8 +18,15 @@ pub fn encoded_len(len: usize, masked: bool) -> usize {
 }
 
 pub fn encode(op: u8, payload: &[u8], mask: Option<[u8; 4]>) -> Vec<u8> {
+    let mut out = Vec::with_capacity(encoded_len(payload.len(), mask.is_some()));
+    encode_into(&mut out, op, payload, mask);
+    out
+}
+
+/// Appends one frame, masking only its new payload even when `out` holds frames.
+pub(crate) fn encode_into(out: &mut Vec<u8>, op: u8, payload: &[u8], mask: Option<[u8; 4]>) {
     let len = payload.len();
-    let mut out = Vec::with_capacity(encoded_len(len, mask.is_some()));
+    out.reserve(encoded_len(len, mask.is_some()));
     out.push(0x80 | op);
     let bit = if mask.is_some() { 0x80 } else { 0 };
     match len {
@@ -41,7 +48,6 @@ pub fn encode(op: u8, payload: &[u8], mask: Option<[u8; 4]>) -> Vec<u8> {
     if let Some(key) = mask {
         apply_mask(&mut out[start..], key);
     }
-    out
 }
 
 pub fn apply_mask(data: &mut [u8], key: [u8; 4]) {
