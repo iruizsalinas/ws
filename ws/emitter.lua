@@ -59,6 +59,10 @@ function emitter.emit(self, name, ...)
   if not list or #list == 0 then
     return false
   end
+  if #list == 1 then
+    list[1](...) -- no snapshot allocation when there are no later listeners
+    return true
+  end
   local snapshot = {}
   for i, fn in ipairs(list) do
     snapshot[i] = fn

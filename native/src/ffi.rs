@@ -7,9 +7,8 @@
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::ffi::{c_int, c_void};
-use std::sync::mpsc::SyncSender;
 use std::sync::{Arc, LazyLock, Mutex, MutexGuard};
-use ws_core::{Conn, Hub, Id, Reply, Server};
+use ws_core::{Conn, Hub, Id, ReplySender, Server};
 
 pub const OK: c_int = 0;
 /// Expected failures, such as sending on a closed socket: `nil, err`.
@@ -98,7 +97,7 @@ pub struct Registry {
     /// The hub of each connection and server, for `ws_shutdown`.
     pub owners: HashMap<Id, u64>,
     /// Pending upgrade decisions and their hubs, keyed by token.
-    pub replies: HashMap<u64, (u64, SyncSender<Reply>)>,
+    pub replies: HashMap<u64, (u64, ReplySender)>,
     pub next: u64,
 }
 

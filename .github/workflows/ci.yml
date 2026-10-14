@@ -62,6 +62,7 @@ jobs:
         run: |
           rustup toolchain install nightly --profile minimal
           cargo install cargo-fuzz --locked --version 0.13.2
+          python fuzz/seeds.py
           cargo +nightly fuzz run '${{ matrix.target }}' -- -max_total_time=60
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         if: failure()
@@ -170,6 +171,7 @@ jobs:
             python tests/native/strings.py --lua "$build\lua\$v\bin\lua.exe"
           }
           python tests/native/abi.py
+          python tests/native/lifecycle.py --lua "$build\lua\5.4\bin\lua.exe"
           New-Item -ItemType Directory -Force "bundles/win32-x86_64" | Out-Null
           Move-Item ws/core.dll "bundles/win32-x86_64/core.dll"
           python .github/scripts/luarocks.py 5.4

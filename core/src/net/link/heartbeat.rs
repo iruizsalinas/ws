@@ -1,12 +1,15 @@
 //! Heartbeat: pings a quiet peer and drops one that stays silent.
 //!
-//! Signs of life are inbound bytes and writes the peer acknowledged. Checks
-//! run only after a read found nothing to read, so an application that is
-//! slow to take events never makes a healthy peer look dead.
+//! Only inbound traffic answers a transmitted ping. While a ping is queued
+//! behind application data, local write progress defers its stall timeout.
+//! Checks run only after a read found nothing, so slow application consumption
+//! does not make a healthy peer look dead.
 
 use super::{Link, State};
-use crate::proto::frame;
+mod clock;
+use crate::lock;
 use std::sync::atomic::Ordering::Relaxed;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 #[derive(Debug, PartialEq, Eq)]
@@ -32,10 +35,18 @@ pub(crate) fn decide(interval: Duration, now: Instant, last: Instant, ping: Opti
     }
 }
 
+/// Shared completion time for one heartbeat's socket write.
+pub(super) type Sent = Arc<Mutex<Option<Instant>>>;
+
+pub(in crate::net::link) struct Probe {
+    pub(in crate::net::link) queued: Instant,
+    pub(in crate::net::link) sent: Sent,
+}
+
 /// The reader's view of the peer.
 pub(super) struct Alive {
     pub seen: Instant,
-    ping: Option<Instant>,
+    pub(in crate::net::link) ping: Option<Probe>,
 }
 
 impl Alive {
@@ -45,11 +56,6 @@ impl Alive {
 }
 
 impl Link {
-    /// How long the reader may block, so checks keep up with the interval.
-    pub(super) fn tick(&self) -> Duration {
-        self.heartbeat.map_or(crate::TICK, |k| (k / 4).clamp(Duration::from_millis(10), crate::TICK))
-    }
-
     /// Runs after a read timed out; `false` once the peer was dropped.
     pub(super) fn heartbeat(&self, alive: &mut Alive) -> bool {
         // Closing has its own deadline.
@@ -57,14 +63,35 @@ impl Link {
             return true;
         };
         let now = Instant::now();
-        let acked = self.born + Duration::from_millis(self.acked.load(Relaxed));
-        match decide(interval, now, alive.seen.max(acked), alive.ping) {
+        if let Some(ns) = self.received.load(Relaxed).checked_sub(1) {
+            alive.seen = alive.seen.max(self.born + Duration::from_nanos(ns));
+        }
+        let sent = alive.ping.as_ref().and_then(|ping| *lock(&ping.sent));
+        if let Some(ping) = &alive.ping
+            && sent.is_none()
+        {
+            // Don't start the response deadline while the ping is still behind
+            // a healthy transfer, but don't let a stalled writer wait forever.
+            let written = self.born + Duration::from_nanos(self.written.load(Relaxed));
+            if now.saturating_duration_since(alive.seen.max(written).max(ping.queued)) < interval {
+                return true;
+            }
+            self.fail("heartbeat timed out");
+            return false;
+        }
+        match decide(interval, now, alive.seen, sent) {
             Action::Wait => true,
             Action::Ping => {
-                // Not counted against the send buffer: it is tiny, and only
-                // sent while the connection is quiet.
-                self.push(self.frame(frame::PING, &self.token));
-                alive.ping = Some(now);
+                let f = lock(&self.flags);
+                if f.state != State::Open {
+                    return true;
+                }
+                // One tiny reserved control frame, even when the send buffer is
+                // full. The writer starts its response clock after transmission.
+                let sent = Arc::new(Mutex::new(None));
+                let queued = Instant::now();
+                self.push_heartbeat(sent.clone());
+                alive.ping = Some(Probe { queued, sent });
                 true
             }
             Action::Dead => {

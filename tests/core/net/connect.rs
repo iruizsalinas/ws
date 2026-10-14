@@ -100,7 +100,7 @@ fn server_close_cancels_an_upgrade_awaiting_a_decision() {
     raw.0.write_all(UPGRADE.as_bytes()).unwrap();
     let Event::Request { reply, .. } = hub.recv(Some(WAIT)).unwrap() else { panic!("expected request") };
     server.close();
-    reply.send(Reply::Accept(None)).unwrap();
+    let _ = reply.send(Reply::Accept(None)); // cancellation can already have dropped the receiver
     let mut head = [0; 1024];
     match raw.0.read(&mut head) {
         Ok(0) => {}
@@ -129,8 +129,7 @@ fn dropping_a_hub_ends_its_connections() {
     opened(queued.id());
 
     drop(hub);
-    // The delivered one ends on its next event, which nobody can receive.
-    delivered.send(b"x", false).unwrap();
+    // No application traffic is needed to wake cancelled network tasks.
     let mut closed = Vec::new();
     while closed.len() < 2 {
         match next(&clients, &accept) {

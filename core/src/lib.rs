@@ -1,7 +1,7 @@
-//! WebSocket (RFC 6455) client and server on std threads and rustls.
+//! WebSocket (RFC 6455) client and server on shared asynchronous I/O and rustls.
 //!
-//! Every connection runs on its own reader and writer threads and reports
-//! to a [`Hub`], which the embedding event loop drains.
+//! Connections share a bounded runtime and report to a [`Hub`], which the
+//! embedding event loop drains on its owning thread.
 
 #![forbid(unsafe_code)]
 
@@ -10,6 +10,8 @@ mod hub;
 mod net;
 pub mod proto;
 mod queue;
+mod reply;
+mod signal;
 pub mod tls;
 
 pub use event::{Event, Reply, Request};
@@ -18,6 +20,7 @@ pub use net::client::Options as ClientOptions;
 pub use net::link::State;
 pub use net::server::{Options as ServerOptions, Server};
 pub use proto::http::Headers;
+pub use reply::ReplySender;
 
 use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 use std::sync::{Mutex, MutexGuard};
@@ -32,8 +35,6 @@ pub const MAX_MESSAGE: usize = 1 << 20;
 pub const MAX_BUFFER: usize = 16 << 20;
 /// Default silence before a heartbeat ping; as much again without a reply drops the peer.
 pub const HEARTBEAT: Duration = Duration::from_secs(30);
-/// How often blocked readers wake to notice closes and deadlines.
-pub(crate) const TICK: Duration = Duration::from_secs(1);
 
 pub(crate) fn next_id() -> Id {
     static NEXT: AtomicU64 = AtomicU64::new(1);

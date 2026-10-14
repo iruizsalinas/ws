@@ -18,6 +18,7 @@ for v in $versions; do
 done
 os=$(uname -s | sed 's/Linux/linux/; s/Darwin/macosx/')
 python tests/native/abi.py
+python tests/native/lifecycle.py --lua .build/lua/5.4/bin/lua
 arch=$(uname -m | sed 's/aarch64/arm64/')
 mkdir -p "bundles/$os-$arch"
 mv ws/core.so "bundles/$os-$arch/core.so"

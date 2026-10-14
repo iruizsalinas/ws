@@ -12,6 +12,8 @@ mod heartbeat;
 mod limits;
 #[path = "net/raw.rs"]
 mod raw;
+#[path = "net/scaling.rs"]
+mod scaling;
 #[path = "net/shutdown.rs"]
 mod shutdown;
 #[path = "net/tls.rs"]

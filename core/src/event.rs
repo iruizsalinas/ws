@@ -1,8 +1,7 @@
-//! What the networking threads report to the application.
+//! What the asynchronous transport reports to the application.
 
-use crate::{Conn, Headers, Id};
+use crate::{Conn, Headers, Id, ReplySender};
 use std::net::SocketAddr;
-use std::sync::mpsc::SyncSender;
 
 /// An upgrade request awaiting a decision.
 #[derive(Clone, Debug)]
@@ -28,7 +27,7 @@ pub enum Event {
     Request {
         server: Id,
         req: Request,
-        reply: SyncSender<Reply>,
+        reply: ReplySender,
     },
     /// A server accepted a connection.
     Connection {

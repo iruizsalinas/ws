@@ -117,25 +117,7 @@ impl Raw {
     }
 
     pub fn frame(&mut self) -> (u8, Vec<u8>) {
-        let mut h = [0u8; 2];
-        self.0.read_exact(&mut h).unwrap();
-        assert_eq!(h[1] & 0x80, 0, "server frames are unmasked");
-        let len = match h[1] & 0x7F {
-            126 => {
-                let mut l = [0u8; 2];
-                self.0.read_exact(&mut l).unwrap();
-                u16::from_be_bytes(l) as usize
-            }
-            127 => {
-                let mut l = [0u8; 8];
-                self.0.read_exact(&mut l).unwrap();
-                u64::from_be_bytes(l) as usize
-            }
-            n => n as usize,
-        };
-        let mut p = vec![0u8; len];
-        self.0.read_exact(&mut p).unwrap();
-        (h[0] & 0x0F, p)
+        server_frame(&mut self.0)
     }
 
     /// Reads until the server closes the TCP connection.
@@ -146,3 +128,26 @@ impl Raw {
 }
 
 pub const UPGRADE: &str = "GET /raw HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n";
+
+/// Decodes a server frame from either a TCP or TLS test transport.
+pub fn server_frame(raw: &mut impl Read) -> (u8, Vec<u8>) {
+    let mut h = [0u8; 2];
+    raw.read_exact(&mut h).unwrap();
+    assert_eq!(h[1] & 0x80, 0, "server frames are unmasked");
+    let len = match h[1] & 0x7F {
+        126 => {
+            let mut l = [0u8; 2];
+            raw.read_exact(&mut l).unwrap();
+            u16::from_be_bytes(l) as usize
+        }
+        127 => {
+            let mut l = [0u8; 8];
+            raw.read_exact(&mut l).unwrap();
+            u64::from_be_bytes(l) as usize
+        }
+        n => n as usize,
+    };
+    let mut p = vec![0u8; len];
+    raw.read_exact(&mut p).unwrap();
+    (h[0] & 0x0F, p)
+}

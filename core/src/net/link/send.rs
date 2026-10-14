@@ -1,44 +1,38 @@
-//! Outbound frames: the send API, sealing and the writer's queue.
-
+//! Bounded outbound WebSocket bytes. TLS work belongs to the transport future.
+use super::heartbeat::Sent;
 use super::{Link, State};
-use crate::lock;
-use crate::proto::frame;
-use rustls::Connection;
+use crate::{lock, proto::frame};
 use std::collections::VecDeque;
-use std::io::Write;
 use std::sync::atomic::Ordering::Relaxed;
 
 pub(super) enum Item {
     Data(Vec<u8>),
+    Heartbeat(Vec<u8>, Sent),
     Shutdown,
 }
-
-/// Writes smaller than this join the previous one, so tiny frames cost
-/// their bytes rather than a queue entry and an allocation each.
 const JOIN: usize = 16 * 1024;
 
 #[derive(Default)]
 pub(super) struct Queue {
-    pub(super) items: VecDeque<Item>,
-    pub(super) done: bool,
-    /// Size of a send refused for a full buffer; reported once it fits.
-    pub(super) drain: Option<usize>,
+    pub items: VecDeque<Item>,
+    pub done: bool,
+    pub shutdown: bool,
+    pub drain: Option<usize>,
+    /// At most one unanswered pong waits under congestion.
+    pub pong: Option<Vec<u8>>,
 }
 
 impl Link {
-    /// Sends a data or ping frame; fails unless the connection is open.
     pub fn send(&self, op: u8, payload: &[u8]) -> Result<(), &'static str> {
         let f = lock(&self.flags);
         if f.state != State::Open || f.sent_close {
             return Err(if f.state == State::Connecting { "not open yet" } else { "closed" });
         }
-        // Checked under flags, which serializes application sends, and
-        // before the frame is built. The writer's in-flight batch counts.
         let len = frame::encoded_len(payload.len(), !self.server);
         if !self.fits(len) {
-            // Rechecked under the queue lock the writer reports progress
-            // under, so it either sees the request or has already made room.
             let mut q = lock(&self.queue);
+            // Register the drain request under the same lock as progress(),
+            // then recheck: otherwise a concurrent drain could be missed.
             if !self.fits(len) {
                 q.drain = Some(len);
                 return Err("send buffer is full");
@@ -48,40 +42,43 @@ impl Link {
         Ok(())
     }
 
-    /// Whether a frame of `len` bytes may be queued now: it must fit in the
-    /// room left, so a larger one is only taken once nothing is waiting.
     pub(super) fn fits(&self, len: usize) -> bool {
         let buffered = self.buffered.load(Relaxed);
         buffered == 0 || buffered.saturating_add(len) <= self.buffer
     }
 
     pub(super) fn frame(&self, op: u8, payload: &[u8]) -> Vec<u8> {
-        // Clients mask every frame with a fresh unpredictable key.
-        let mask = (!self.server).then(crate::random::<4>);
-        frame::encode(op, payload, mask)
+        frame::encode(op, payload, (!self.server).then(crate::random::<4>))
     }
 
     pub(super) fn push(&self, data: Vec<u8>) {
-        let Some(io) = self.io.get() else { return };
-        let mut tls = io.tls.as_ref().map(lock);
-        let data = match tls.as_deref_mut() {
-            Some(conn) => seal(conn, &data),
-            None => data,
-        };
-        self.enqueue(Item::Data(data));
-        drop(tls);
+        if self.io.get().is_some() {
+            self.enqueue(Item::Data(data));
+        }
     }
 
-    /// Queues a TCP half-close after everything already queued.
-    pub(super) fn push_shutdown(&self) {
-        let Some(io) = self.io.get() else { return };
-        let mut tls = io.tls.as_ref().map(lock);
-        if let Some(conn) = tls.as_deref_mut() {
-            conn.send_close_notify();
-            self.enqueue(Item::Data(seal(conn, &[])));
+    pub(super) fn push_heartbeat(&self, sent: Sent) {
+        if self.io.get().is_some() {
+            self.enqueue(Item::Heartbeat(self.frame(frame::PING, &self.token), sent));
         }
-        self.enqueue(Item::Shutdown);
-        drop(tls);
+    }
+
+    pub(super) fn flush_pong(&self) {
+        let f = lock(&self.flags);
+        let pong = lock(&self.queue).pong.take();
+        if f.state != State::Closed
+            && f.received.is_none()
+            && f.failed.is_none()
+            && let Some(data) = pong
+        {
+            self.push(self.frame(frame::PONG, &data));
+        }
+    }
+
+    pub(super) fn push_shutdown(&self) {
+        if self.io.get().is_some() {
+            self.enqueue(Item::Shutdown);
+        }
     }
 
     pub(super) fn enqueue(&self, item: Item) {
@@ -90,15 +87,23 @@ impl Link {
             return;
         }
         match item {
-            Item::Data(d) if d.is_empty() => return,
-            Item::Data(d) => {
-                self.buffered.fetch_add(d.len(), Relaxed);
+            Item::Data(data) if data.is_empty() => return,
+            Item::Data(data) => {
+                self.buffered.fetch_add(data.len(), Relaxed);
                 match q.items.back_mut() {
-                    Some(Item::Data(last)) if d.len() < JOIN && last.len() < JOIN => last.extend_from_slice(&d),
-                    _ => q.items.push_back(Item::Data(d)),
+                    Some(Item::Data(last)) if data.len() < JOIN && last.len() < JOIN => last.extend_from_slice(&data),
+                    _ => q.items.push_back(Item::Data(data)),
                 }
             }
-            Item::Shutdown => q.items.push_back(Item::Shutdown),
+            Item::Heartbeat(data, sent) => {
+                self.buffered.fetch_add(data.len(), Relaxed);
+                q.items.push_back(Item::Heartbeat(data, sent));
+            }
+            Item::Shutdown => {
+                q.pong = None;
+                q.shutdown = true;
+                q.items.push_back(Item::Shutdown);
+            }
         }
         drop(q);
         self.ready.notify_one();
@@ -108,21 +113,9 @@ impl Link {
         let mut q = lock(&self.queue);
         q.done = true;
         q.items.clear();
+        q.pong = None;
+        q.shutdown = false;
         drop(q);
-        self.ready.notify_all();
+        self.ready.notify_one();
     }
-}
-
-/// Encrypts `plain` and drains every pending TLS record.
-pub(super) fn seal(conn: &mut Connection, plain: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(plain.len() + 64);
-    if !plain.is_empty() {
-        let _ = conn.writer().write_all(plain);
-    }
-    while conn.wants_write() {
-        if conn.write_tls(&mut out).is_err() {
-            break;
-        }
-    }
-    out
 }

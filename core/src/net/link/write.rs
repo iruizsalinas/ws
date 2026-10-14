@@ -1,84 +1,123 @@
-//! The writer thread: drains the queue onto the socket.
-
-use super::Link;
-use super::send::Item;
+//! Async writes yield between bounded chunks; no lock crosses an await.
+use super::budget::Budget;
+use super::{Link, heartbeat::Sent, send::Item};
 use crate::{Event, lock};
-use std::io::{ErrorKind, Write};
-use std::net::{Shutdown, TcpStream};
+use std::collections::VecDeque;
+use std::io;
+use std::sync::Arc;
 use std::sync::atomic::Ordering::Relaxed;
+use std::time::Duration;
+use tokio::io::{AsyncWrite, AsyncWriteExt};
+use tokio::sync::Notify;
 
 impl Link {
-    pub(super) fn write_loop(&self, mut tcp: TcpStream) {
+    pub(super) async fn write_loop(&self, mut stream: impl AsyncWrite + Unpin, flush: Arc<Notify>, chunk: usize) {
+        // Keep cancellation registrations for the lifetime of the writer,
+        // including while a write, flush or shutdown is waiting on the socket.
+        tokio::select! {
+            biased;
+            _ = self.stopped.wait() => (),
+            _ = self.events.wait_closed() => self.terminate(),
+            result = self.write_pending(&mut stream, &flush, chunk) => {
+                if result.is_err() { self.end(); }
+            }
+        }
+    }
+
+    async fn write_pending(
+        &self,
+        stream: &mut (impl AsyncWrite + Unpin),
+        flush: &Notify,
+        chunk: usize,
+    ) -> io::Result<()> {
+        let mut items = VecDeque::new();
+        let mut budget = Budget::default();
         loop {
-            let items: Vec<Item> = {
+            let pong = {
                 let mut q = lock(&self.queue);
-                while q.items.is_empty() && !q.done {
-                    q = self.ready.wait(q).unwrap_or_else(|e| e.into_inner());
-                }
                 if q.done {
-                    return;
+                    return Ok(());
                 }
-                q.items.drain(..).collect()
+                // Exchange two reusable empty/nonempty buffers, without
+                // allocating a temporary Vec on every batch.
+                std::mem::swap(&mut items, &mut q.items);
+                q.pong.is_some()
             };
-            for item in items {
+            if items.is_empty() && !pong {
+                tokio::select! {
+                    _ = self.ready.notified() => {}
+                    _ = flush.notified() => { stream.flush().await?; }
+                }
+                continue;
+            }
+            if pong {
+                self.flush_pong();
+            }
+            while let Some(item) = items.pop_front() {
                 match item {
-                    Item::Data(d) => {
-                        if !self.write_out(&mut tcp, &d) {
-                            return self.end();
-                        }
+                    Item::Data(data) => self.write_out(stream, &data, None, &mut budget, chunk).await?,
+                    Item::Heartbeat(data, sent) => {
+                        self.write_out(stream, &data, Some(&sent), &mut budget, chunk).await?
                     }
                     Item::Shutdown => {
-                        let _ = tcp.shutdown(Shutdown::Write);
+                        stream.shutdown().await?;
+                        lock(&self.queue).shutdown = false;
+                        self.drained.notify_one();
                     }
                 }
             }
         }
     }
 
-    /// Writes `data` piece by piece; `false` once the socket failed or the
-    /// connection ended. The socket's write timeout bounds each attempt, so
-    /// a peer that stopped reading cannot hold this thread after a close.
-    fn write_out(&self, tcp: &mut TcpStream, data: &[u8]) -> bool {
+    async fn write_out(
+        &self,
+        stream: &mut (impl AsyncWrite + Unpin),
+        data: &[u8],
+        sent: Option<&Sent>,
+        budget: &mut Budget,
+        chunk: usize,
+    ) -> io::Result<()> {
         let mut at = 0;
         while at < data.len() {
-            match tcp.write(&data[at..]) {
-                Ok(0) => return false,
-                Ok(n) => {
-                    at += n;
-                    self.progress(n);
-                }
-                Err(e) if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut | ErrorKind::Interrupted) => {
-                    if lock(&self.queue).done {
-                        return false;
-                    }
-                }
-                Err(_) => return false,
+            let n = stream.write(&data[at..data.len().min(at + chunk)]).await?;
+            if n == 0 {
+                return Err(io::ErrorKind::WriteZero.into());
             }
+            stream.flush().await?;
+            at += n;
+            // A write or TLS flush may wait arbitrarily long. Start the probe's
+            // clock at actual TCP progress, not before entering that await.
+            let transmitted = sent.map(|_| self.born + Duration::from_nanos(self.written.load(Relaxed)));
+            self.progress(n);
+            if at == data.len()
+                && let Some(sent) = sent
+            {
+                *lock(sent) = transmitted;
+                self.changed.notify_one();
+            }
+            budget.progress(n).await;
         }
-        true
+        Ok(())
     }
 
-    /// Accounts `n` written bytes: wakes `flush_close`, records the peer as
-    /// alive while a backlog remains (room for more means it acknowledged
-    /// data), and reports `drain` once a refused send would now fit.
     pub(super) fn progress(&self, n: usize) {
         let drain = {
             let mut q = lock(&self.queue);
             let left = self.buffered.fetch_sub(n, Relaxed) - n;
-            if left > 0 {
-                let ms = u64::try_from(self.born.elapsed().as_millis()).unwrap_or(u64::MAX);
-                self.acked.store(ms, Relaxed);
-            }
-            self.drained.notify_all();
+            self.drained.notify_one();
             let drain = q.drain.is_some_and(|len| left == 0 || left.saturating_add(len) <= self.buffer);
             if drain {
                 q.drain = None;
             }
             drain
         };
-        // Emitting takes `flags`, which must not be taken under `queue`.
+        // emit() takes flags; never call it while holding queue (lock order).
         if drain {
             self.emit(Event::Drain { id: self.id });
         }
     }
 }
+
+#[cfg(test)]
+#[path = "../../../../tests/core/unit/write.rs"]
+mod tests;

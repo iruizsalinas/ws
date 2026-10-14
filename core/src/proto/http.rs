@@ -1,4 +1,5 @@
 //! A strict, bounded HTTP/1.1 head parser and header helpers.
+use std::collections::HashSet;
 
 pub const MAX_HEAD: usize = 16 * 1024;
 const MAX_HEADERS: usize = 64;
@@ -81,9 +82,10 @@ pub(crate) fn has_token(headers: &Headers, name: &str, token: &str) -> bool {
 /// A comma-separated list of distinct tokens across all such headers.
 pub(crate) fn tokens(headers: &Headers, name: &str) -> Option<Vec<String>> {
     let mut out: Vec<String> = Vec::new();
+    let mut seen = HashSet::new();
     for item in all(headers, name).flat_map(|v| v.split(',')) {
         let item = item.trim_matches([' ', '\t']);
-        if !is_token(item) || out.iter().any(|p| p == item) {
+        if !is_token(item) || !seen.insert(item) {
             return None;
         }
         out.push(item.to_string());

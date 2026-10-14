@@ -3,7 +3,6 @@
 use super::{CLOSE_TIMEOUT, Link, State};
 use crate::proto::frame;
 use crate::{Event, lock};
-use std::net::Shutdown;
 use std::sync::atomic::Ordering::Relaxed;
 use std::time::Instant;
 
@@ -24,6 +23,7 @@ impl Link {
             }
             _ => {}
         }
+        self.changed.notify_one();
     }
 
     /// Drops the connection immediately.
@@ -41,9 +41,10 @@ impl Link {
             let _ = self.events.send(Event::Close { id: self.id, code, reason });
         }
         self.stop_writer();
-        self.drained.notify_all();
+        self.stopped.set();
+        self.drained.notify_one();
         if let Some(io) = self.io.get() {
-            let _ = io.tcp.shutdown(Shutdown::Both);
+            io.shutdown();
         }
     }
 
@@ -62,7 +63,7 @@ impl Link {
 
     /// EOF only closes the peer's sending direction. Give our close reply time
     /// to leave the writer before finish() drops the queue and shuts down TCP.
-    pub(super) fn flush_close(&self) {
+    pub(super) async fn flush_close(&self) {
         let deadline = {
             let f = lock(&self.flags);
             if f.received.is_none() && f.failed.is_none() {
@@ -71,18 +72,23 @@ impl Link {
             f.deadline
         };
         let Some(deadline) = deadline else { return };
-        let mut q = lock(&self.queue);
-        while !q.done && self.buffered.load(Relaxed) > 0 {
-            let left = deadline.saturating_duration_since(Instant::now());
-            if left.is_zero() {
-                break;
+        let stopped = self.stopped.wait();
+        let timeout = tokio::time::sleep_until(deadline.into());
+        tokio::pin!(stopped, timeout);
+        loop {
+            let drained = self.drained.notified();
+            let pending = {
+                let q = lock(&self.queue);
+                !q.done && (self.buffered.load(Relaxed) > 0 || q.shutdown)
+            };
+            if !pending {
+                return;
             }
-            q = self.drained.wait_timeout(q, left).unwrap_or_else(|e| e.into_inner()).0;
+            tokio::select! {
+                _ = &mut stopped => return,
+                _ = drained => {}
+                _ = &mut timeout => return,
+            }
         }
-    }
-
-    /// Whether the closing handshake ran out of time.
-    pub(super) fn expired(&self) -> bool {
-        lock(&self.flags).deadline.is_some_and(|d| Instant::now() >= d)
     }
 }

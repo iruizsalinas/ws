@@ -2,6 +2,8 @@ use ws_core::proto::handshake::{accept_key, reject, request, response};
 use ws_core::proto::http::check_header;
 
 const KEY: &str = "dGhlIHNhbXBsZSBub25jZQ==";
+#[path = "handshake/protocols.rs"]
+mod protocols;
 
 fn req(extra: &str) -> String {
     format!(

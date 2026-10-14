@@ -1,7 +1,7 @@
 //! Event envelopes retain admission slots until the application drains them.
 
-use crate::{Event, lock};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::Relaxed, Ordering::SeqCst};
+use crate::{Event, lock, signal::Signal};
+use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 
@@ -32,31 +32,38 @@ pub(crate) struct Queued {
     _pending: Option<Arc<Permit>>,
 }
 
+type Admission = Arc<Mutex<Option<Arc<Permit>>>>;
+
 #[derive(Clone)]
 pub(crate) struct Events {
     tx: Sender<Queued>,
-    permit: Arc<Mutex<Option<Arc<Permit>>>>,
+    // Client/hub senders have no admission slot and need no shared slot lock.
+    permit: Option<Admission>,
     /// Set once the hub is gone; events sent after that are never read.
-    closed: Arc<AtomicBool>,
+    closed: Arc<Signal>,
 }
 
 impl From<Sender<Queued>> for Events {
     fn from(tx: Sender<Queued>) -> Self {
-        Self { tx, permit: Arc::default(), closed: Arc::default() }
+        Self { tx, permit: None, closed: Arc::default() }
     }
 }
 
 impl Events {
     pub fn admitted(&self, permit: Arc<Permit>) -> Self {
-        Self { tx: self.tx.clone(), permit: Arc::new(Mutex::new(Some(permit))), closed: self.closed.clone() }
+        Self { tx: self.tx.clone(), permit: Some(Arc::new(Mutex::new(Some(permit)))), closed: self.closed.clone() }
     }
 
     pub fn close(&self) {
-        self.closed.store(true, SeqCst);
+        self.closed.set();
     }
 
     pub fn closed(&self) -> bool {
-        self.closed.load(SeqCst)
+        self.closed.is_set()
+    }
+
+    pub async fn wait_closed(&self) {
+        self.closed.wait().await;
     }
 
     pub fn send(&self, event: Event) -> Result<(), ()> {
@@ -65,10 +72,12 @@ impl Events {
 
     /// A request retains its handshake slot even if its worker times out.
     pub fn send_pending(&self, event: Event, pending: Option<Arc<Permit>>) -> Result<(), ()> {
-        let mut permit = lock(&self.permit);
         // A retained closed Conn must not retain capacity forever. The final
         // event and the network worker still own their slots until drained.
-        let slot = if matches!(event, Event::Close { .. }) { permit.take() } else { permit.clone() };
+        let slot = self.permit.as_ref().and_then(|admission| {
+            let mut permit = lock(admission);
+            if matches!(event, Event::Close { .. }) { permit.take() } else { permit.clone() }
+        });
         if self.closed() {
             return Err(());
         }

@@ -63,6 +63,18 @@ H.test("socket misuse raises", function()
   H.run()
 end)
 
+H.test("text validation still raises for closed native handles", function()
+  local core = require("ws.core")
+  local ok, err, fatal = core.send(1, "\255", false)
+  H.eq(ok, nil)
+  H.eq(err, "text must be valid UTF-8; use send(data, true) for binary")
+  H.eq(fatal, true)
+  ok, err, fatal = core.send(1, "valid text", false)
+  H.eq(ok, nil)
+  H.eq(err, "closed")
+  H.eq(fatal, false)
+end)
+
 H.test("protocol options are distinct nonempty tokens in a dense array", function()
   local opts = require("ws.opts")
   for _, protocols in ipairs({ "", "a b", { "chat", "chat" }, { [2] = "chat" }, { named = "chat" } }) do

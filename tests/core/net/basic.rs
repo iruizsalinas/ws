@@ -9,6 +9,10 @@ fn rust_api_rejects_invalid_outbound_frames() {
     let server = listen(&hub);
     let (client, peer) = pair(&hub, &server, ClientOptions::default());
     assert!(client.send(&[0xff], false).is_err());
+    client.send_text("valid \u{e9} text").unwrap();
+    assert!(
+        matches!(next(&hub, &accept), Event::Message { binary: false, data, .. } if data == "valid \u{e9} text".as_bytes())
+    );
     assert!(client.ping(&[0; 126]).is_err());
     for (code, reason) in [(1005, String::new()), (1000, "x".repeat(124))] {
         assert!(client.close(code, &reason).is_err());

@@ -4,6 +4,9 @@ use super::*;
 use crate::net::link::Config;
 use std::sync::mpsc::channel;
 
+#[path = "handle/pong.rs"]
+mod pong;
+
 #[test]
 fn late_frames_cannot_reopen_a_terminated_connection() {
     for close in [false, true] {

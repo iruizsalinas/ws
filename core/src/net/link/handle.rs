@@ -3,13 +3,13 @@
 use super::{CLOSE_TIMEOUT, EVENT_COST, Link, State};
 use crate::proto::frame::{self, Fail, Msg};
 use crate::proto::reader::Reader;
-use crate::{Event, TICK, lock};
+use crate::{Event, lock};
 use std::sync::atomic::Ordering::Relaxed;
 use std::time::Instant;
 
 /// Undelivered inbound bytes before the reader waits for the application.
 pub(super) const INBOX_LIMIT: usize = 1 << 20;
-/// Pongs stop being queued past this much unsent data.
+/// Keep normal pong ordering, but defer replies once writes are this far behind.
 const PONG_LIMIT: usize = 1 << 20;
 
 impl Link {
@@ -58,8 +58,18 @@ impl Link {
             Msg::Binary(data) => self.deliver(data.len(), Event::Message { id, data, binary: true }),
             Msg::Ping(data) => {
                 let f = lock(&self.flags);
-                if f.state != State::Closed && f.received.is_none() && self.buffered.load(Relaxed) < PONG_LIMIT {
-                    self.push(self.frame(frame::PONG, &data));
+                if f.state != State::Closed && f.received.is_none() && f.failed.is_none() {
+                    if self.buffered.load(Relaxed) < PONG_LIMIT {
+                        // Preserve reply ordering before delivering later messages.
+                        // A newer immediate reply also supersedes a deferred one.
+                        lock(&self.queue).pong = None;
+                        self.push(self.frame(frame::PONG, &data));
+                    } else {
+                        // Coalesce pending replies instead of dropping the pong or
+                        // allocating an unbounded control queue for a slow reader.
+                        lock(&self.queue).pong = Some(data.clone());
+                        self.ready.notify_one();
+                    }
                 }
                 drop(f);
                 self.deliver(data.len(), Event::Ping { id, data });
@@ -92,26 +102,21 @@ impl Link {
 
     /// Called once the application has taken an inbound event.
     pub fn consumed(&self, bytes: usize) {
-        let _q = lock(&self.queue);
         self.inbox.fetch_sub(bytes + EVENT_COST, Relaxed);
-        self.drained.notify_one();
+        self.consumed.notify_one();
     }
 
-    /// Backpressure: waits (one tick at most) while the application lags.
-    pub(super) fn wait_inbox(&self) -> bool {
+    /// The reader awaits consumption or a lifecycle signal when this is false.
+    pub(super) fn wait_inbox(&self, state: State) -> bool {
         // Keep reading the closing handshake even if the application stopped
         // consuming events. Delivery stays bounded while closing.
-        if self.state() != State::Open {
+        if state != State::Open {
             return true;
         }
         if self.inbox.load(Relaxed) < INBOX_LIMIT {
             return true;
         }
-        let q = lock(&self.queue);
-        if self.inbox.load(Relaxed) >= INBOX_LIMIT {
-            let _ = self.drained.wait_timeout(q, TICK);
-        }
-        self.inbox.load(Relaxed) < INBOX_LIMIT
+        false
     }
 
     fn deliver(&self, bytes: usize, event: Event) {

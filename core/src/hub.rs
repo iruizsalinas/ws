@@ -32,10 +32,18 @@ impl Conn {
 
     /// Sends text or binary data; rejects text that is not valid UTF-8.
     pub fn send(&self, data: &[u8], binary: bool) -> Result<(), &'static str> {
-        if !binary && std::str::from_utf8(data).is_err() {
-            return Err("text must be valid UTF-8; use send(data, true) for binary");
+        if binary {
+            self.0.send(frame::BINARY, data)
+        } else {
+            let text =
+                std::str::from_utf8(data).map_err(|_| "text must be valid UTF-8; use send(data, true) for binary")?;
+            self.send_text(text)
         }
-        self.0.send(if binary { frame::BINARY } else { frame::TEXT }, data)
+    }
+
+    /// Sends text already validated by Rust's string type, without scanning it again.
+    pub fn send_text(&self, data: &str) -> Result<(), &'static str> {
+        self.0.send(frame::TEXT, data.as_bytes())
     }
 
     /// Sends a ping, rejecting payloads longer than 125 bytes.

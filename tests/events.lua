@@ -1,6 +1,19 @@
 local H = require("tests.helper")
 local ws = require("ws")
 
+H.test("a single listener can replace itself and emit recursively", function()
+  local emitter = require("ws.emitter")
+  local object, events, calls = { _on = {} }, { message = true }, {}
+  emitter.once(object, events, "message", function(value)
+    calls[#calls + 1] = value
+    emitter.on(object, events, "message", function(nested) calls[#calls + 1] = nested end)
+    emitter.emit(object, "message", "nested")
+  end)
+  assert(emitter.emit(object, "message", "first"))
+  assert(emitter.emit(object, "message", "last"))
+  H.eq(table.concat(calls, ","), "first,nested,last")
+end)
+
 -- An echo server and a client that sends `count` messages once open.
 local function chatter(count)
   local server = H.echo()

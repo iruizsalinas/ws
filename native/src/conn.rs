@@ -12,10 +12,17 @@ fn sent(r: Result<(), &'static str>) -> c_int {
 #[unsafe(no_mangle)]
 pub extern "C" fn ws_send(id: u64, data: WsStr, binary: bool) -> c_int {
     let data = data.bytes().unwrap_or_default();
-    if !binary && std::str::from_utf8(data).is_err() {
-        return fail(FATAL, "text must be valid UTF-8; use send(data, true) for binary");
+    if binary {
+        with_conn(id, |c| sent(c.send(data, true)))
+    } else {
+        // Validate before looking up the handle, preserving fatal argument
+        // errors even for a closed socket. &str carries that validation onward.
+        let text = match std::str::from_utf8(data) {
+            Ok(text) => text,
+            Err(_) => return fail(FATAL, "text must be valid UTF-8; use send(data, true) for binary"),
+        };
+        with_conn(id, |c| sent(c.send_text(text)))
     }
-    with_conn(id, |c| sent(c.send(data, binary)))
 }
 
 #[unsafe(no_mangle)]

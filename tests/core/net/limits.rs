@@ -80,3 +80,19 @@ fn drain_follows_a_refused_send_once_there_is_room() {
     }
     conn.terminate();
 }
+
+#[test]
+fn ping_is_answered_after_a_large_backlog_drains() {
+    let hub = Hub::default();
+    let server = hub.listen(ServerOptions { host: "127.0.0.1".into(), heartbeat: None, ..Default::default() }).unwrap();
+    let (mut raw, conn) = Raw::open(&server, &hub);
+    let big = vec![7; 32 << 20];
+    conn.send(&big, true).unwrap();
+    assert!(conn.buffered() > 1 << 20, "the test must exercise pong backpressure");
+    raw.send(frame::PING, b"still here");
+    // Wait until the ping has been handled before letting the writer drain.
+    assert!(matches!(next(&hub, &accept), Event::Ping { data, .. } if data == b"still here"));
+    assert_eq!(raw.frame(), (frame::BINARY, big));
+    assert_eq!(raw.frame(), (frame::PONG, b"still here".to_vec()));
+    conn.terminate();
+}

@@ -1,5 +1,5 @@
 use super::*;
-use std::sync::mpsc::{channel, sync_channel};
+use std::sync::mpsc::channel;
 
 #[test]
 fn closed_hubs_refuse_new_events() {
@@ -28,7 +28,7 @@ fn expired_requests_keep_capacity_until_their_events_are_drained() {
     let events = Events::from(tx);
     let permit = Permit::acquire(&count, 1).unwrap();
     let worker = events.admitted(permit.clone());
-    let (reply, decision) = sync_channel(1);
+    let (reply, decision) = crate::reply::channel();
     worker
         .send(Event::Request {
             server: 1,
@@ -59,7 +59,7 @@ fn expired_requests_retain_pending_slots_even_with_unlimited_connections() {
     let connection = Permit::acquire(&connections, usize::MAX).unwrap();
     let worker = events.admitted(connection.clone());
     let slot = Permit::acquire(&pending, 1).unwrap();
-    let (reply, decision) = sync_channel(1);
+    let (reply, decision) = crate::reply::channel();
     worker
         .send_pending(
             Event::Request {
