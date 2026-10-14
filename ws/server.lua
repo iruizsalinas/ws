@@ -24,7 +24,7 @@ function Server.listen(arg)
   end
   local limits, tls = o.limits or {}, o.tls or {}
   if o.tls and not (tls.cert and tls.key) then
-    error("options 'tls.cert' and 'tls.key' go together", 2)
+    error("options 'tls.cert' and 'tls.key' must be set together", 2)
   end
   local id, err = core.listen(loop.hub, o.host or "0.0.0.0", o.port, tls.cert, tls.key,
     limits.message, limits.buffer, limits.connections, o.heartbeat)

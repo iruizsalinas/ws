@@ -84,7 +84,7 @@ end
 -- whether anything is still active. For embedding in another loop.
 function loop.poll(timeout)
   if timeout ~= nil and (type(timeout) ~= "number" or not (timeout >= 0)) then
-    error("timeout must be a non-negative number", 2)
+    error("timeout must be a non-negative number of seconds", 2)
   end
   return guarded(step, timeout or 0)
 end
