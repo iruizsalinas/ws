@@ -1,9 +1,9 @@
 rockspec_format = "3.0"
 package = "ws"
-version = "0.2.2-1"
+version = "0.2.3-1"
 source = {
-  url = "https://github.com/iruizsalinas/ws/archive/refs/tags/v0.2.2.tar.gz",
-  dir = "ws-0.2.2",
+  url = "https://github.com/iruizsalinas/ws/archive/refs/tags/v0.2.3.tar.gz",
+  dir = "ws-0.2.3",
 }
 description = {
   summary = "A WebSocket client and server library for Lua",
