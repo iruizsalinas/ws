@@ -48,7 +48,8 @@ jobs:
           cargo fmt --all -- --check
           cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Test
-        run: cargo test --workspace --locked
+        # Leave CPU time for socket/heartbeat workers on shared runners.
+        run: cargo test --workspace --locked -- --test-threads=2
 
   msrv:
     name: Rust 1.88 (minimum)
@@ -61,7 +62,7 @@ jobs:
       - name: Test
         run: |
           rustup toolchain install 1.88 --profile minimal
-          cargo +1.88 test --workspace --locked
+          cargo +1.88 test --workspace --locked -- --test-threads=2
 
   audit:
     name: Dependency audit

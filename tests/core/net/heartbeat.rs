@@ -5,7 +5,9 @@ use std::time::{Duration, Instant};
 use ws_core::proto::frame::{PING, PONG, TEXT};
 use ws_core::*;
 
-const IV: Duration = Duration::from_millis(200);
+// Real sockets need room for scheduler delays on shared CI runners. Exact
+// heartbeat boundaries are covered separately by the unit tests.
+const IV: Duration = Duration::from_secs(1);
 
 fn server(hub: &Hub, heartbeat: Option<Duration>) -> Server {
     hub.listen(ServerOptions { host: "127.0.0.1".into(), heartbeat, ..Default::default() }).unwrap()

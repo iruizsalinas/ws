@@ -51,9 +51,17 @@ fn inbound_traffic_defers_pings() {
     let until = Instant::now() + IV * 3;
     while Instant::now() < until {
         raw.send(TEXT, b"busy");
-        std::thread::sleep(IV / 4);
+        // Confirm the server consumed the traffic before checking for a ping.
+        match next(&hub, &accept) {
+            Event::Message { id, data, binary } => {
+                assert_eq!(id, conn.id());
+                assert_eq!(data, b"busy");
+                assert!(!binary);
+            }
+            e => panic!("unexpected {}", describe(&e)),
+        }
+        assert!(raw.quiet(Duration::from_millis(50)), "unexpected socket activity while the peer was sending");
     }
-    assert!(raw.quiet(Duration::from_millis(10)), "pinged a peer that was sending");
     assert_eq!(conn.state(), State::Open);
     // Once the traffic stops, the quiet peer is pinged after all.
     assert_eq!(raw.frame().0, PING);
