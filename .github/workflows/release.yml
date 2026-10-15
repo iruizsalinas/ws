@@ -1,6 +1,17 @@
 name: Release
 on:
   workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Version bump (current retries an unpublished version)'
+        type: choice
+        required: true
+        default: patch
+        options:
+          - patch
+          - minor
+          - major
+          - current
 permissions:
   contents: read
 # One release at a time; a second run waits instead of racing the first.
@@ -8,16 +19,74 @@ concurrency:
   group: release
   cancel-in-progress: false
 jobs:
+  prepare:
+    name: Prepare release commit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    outputs:
+      commit: ${{ steps.commit.outputs.sha }}
+      version: ${{ steps.version.outputs.version }}
+      spec: ${{ steps.version.outputs.spec }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: '3.13'
+      - name: Check release branch
+        run: |
+          if [ "$GITHUB_REF" != 'refs/heads/main' ]; then
+            echo 'Releases must run from main.'
+            exit 1
+          fi
+          git fetch origin main
+          if [ "$(git rev-parse FETCH_HEAD)" != "$GITHUB_SHA" ]; then
+            echo 'main has advanced; start a new release run.'
+            exit 1
+          fi
+      - name: Bump version
+        id: version
+        env:
+          VERSION_BUMP: ${{ inputs.bump }}
+        run: python .github/scripts/release_version.py "$VERSION_BUMP"
+      - name: Commit release version
+        id: commit
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          git add -A -- Cargo.toml Cargo.lock fuzz/Cargo.lock ws/init.lua ':(glob)ws-*-1.rockspec'
+          if ! git diff --cached --quiet; then
+            git -c user.name='github-actions[bot]' \
+              -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+              commit -m "chore: release $VERSION"
+            git push origin HEAD:refs/heads/main
+          fi
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
   ci:
+    needs: prepare
     uses: ./.github/workflows/ci.yml
+    with:
+      release_commit: ${{ needs.prepare.outputs.commit }}
   publish:
-    needs: ci
+    needs: [prepare, ci]
     runs-on: ubuntu-24.04
     environment: release
+    env:
+      SPEC: ${{ needs.prepare.outputs.spec }}
+      VERSION: ${{ needs.prepare.outputs.version }}
+      RELEASE_COMMIT: ${{ needs.prepare.outputs.commit }}
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
+          persist-credentials: true
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: '3.13'
@@ -37,14 +106,18 @@ jobs:
           python .github/scripts/luarocks.py 5.4
       - name: Tag the version
         run: |
-          set -- ws-[0-9]*-1.rockspec
-          spec=$1
-          version=${spec#ws-}
-          version=${version%-1.rockspec}
-          echo "SPEC=$spec" >> "$GITHUB_ENV"
-          echo "VERSION=$version" >> "$GITHUB_ENV"
-          git tag "v$version" "$GITHUB_SHA"
-          git push origin "refs/tags/v$version"
+          existing=$(git ls-remote --tags origin "refs/tags/v$VERSION")
+          existing_sha=$(printf '%s' "$existing" | awk '{print $1}')
+          if [ -n "$existing_sha" ]; then
+            if [ "$existing_sha" = "$RELEASE_COMMIT" ]; then
+              echo "Tag v$VERSION already points to the release commit; skipping."
+              exit 0
+            fi
+            echo "Tag v$VERSION already points to another commit."
+            exit 1
+          fi
+          git tag "v$VERSION" "$RELEASE_COMMIT"
+          git push origin "refs/tags/v$VERSION"
       - name: Publish to LuaRocks
         env:
           LUAROCKS_API_KEY: ${{ secrets.LUAROCKS_API_KEY }}

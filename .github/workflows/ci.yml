@@ -4,6 +4,11 @@ on:
   pull_request:
   workflow_dispatch:
   workflow_call:
+    inputs:
+      release_commit:
+        type: string
+        required: false
+        default: ''
   # Weekly, so new advisories and toolchain changes surface without a push.
   schedule:
     - cron: '17 6 * * 1'
@@ -12,6 +17,19 @@ permissions:
 env:
   WS_WERROR: '1'
 jobs:
+  release-version:
+    name: Release version tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ inputs.release_commit || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: '3.13'
+      - run: python .github/scripts/test_release_version.py
+
   rust:
     name: Rust / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
@@ -21,6 +39,9 @@ jobs:
         os: [ubuntu-24.04, macos-15, windows-2022]
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ inputs.release_commit || github.sha }}
+          persist-credentials: false
       - name: Lint
         if: runner.os == 'Linux'
         run: |
@@ -34,6 +55,9 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ inputs.release_commit || github.sha }}
+          persist-credentials: false
       - name: Test
         run: |
           rustup toolchain install 1.88 --profile minimal
@@ -44,6 +68,9 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ inputs.release_commit || github.sha }}
+          persist-credentials: false
       - name: Audit
         run: |
           cargo install cargo-audit --locked --version 0.22.2
@@ -58,6 +85,9 @@ jobs:
         target: [reader, handshake]
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ inputs.release_commit || github.sha }}
+          persist-credentials: false
       - name: Fuzz
         run: |
           rustup toolchain install nightly --profile minimal
@@ -75,6 +105,9 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ inputs.release_commit || github.sha }}
+          persist-credentials: false
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: '3.13'
@@ -105,6 +138,9 @@ jobs:
         arch: [x86_64, aarch64]
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ inputs.release_commit || github.sha }}
+          persist-credentials: false
       - name: Toolchain
         run: |
           curl -sSf --retry 5 --retry-connrefused https://sh.rustup.rs | sh -s -- -y --profile minimal
@@ -129,6 +165,9 @@ jobs:
       MACOSX_DEPLOYMENT_TARGET: '11.0'
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ inputs.release_commit || github.sha }}
+          persist-credentials: false
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: '3.13'
@@ -200,6 +239,9 @@ jobs:
             bundle: bundle-macos-15
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ inputs.release_commit || github.sha }}
+          persist-credentials: false
       - name: Install LuaJIT
         run: |
           if [ "$RUNNER_OS" = Linux ]; then sudo apt-get install -y luajit; else brew install luajit; fi
@@ -218,10 +260,13 @@ jobs:
           luajit tests/run.lua
 
   assemble:
-    needs: [rust, msrv, audit, fuzz, autobahn, linux, bundle, luajit]
+    needs: [release-version, rust, msrv, audit, fuzz, autobahn, linux, bundle, luajit]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ inputs.release_commit || github.sha }}
+          persist-credentials: false
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: '3.13'
